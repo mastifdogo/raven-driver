@@ -21,6 +21,12 @@ from .http import Endpoint
 COMMON_PATHS = (
     "/",
     "/index.html",
+    "/index.htm",
+    "/index.cgi",
+    "/index.php",
+    "/home.html",
+    "/main.html",
+    "/default.html",
     "/robots.txt",
     "/eSCL/ScannerCapabilities",
     "/escl/ScannerCapabilities",
@@ -49,6 +55,8 @@ COMMON_PATHS = (
     "/cgi-bin/",
     "/cgi-bin/status.cgi",
     "/cgi-bin/info.cgi",
+    "/cgi-bin/index.cgi",
+    "/cgi-bin/main.cgi",
     "/DevMgmt/ScanCaps.xml",
     "/WebServices/ScannerService",
 )
@@ -56,6 +64,13 @@ COMMON_PATHS = (
 # Quoted absolute paths inside HTML, JS and JSON, e.g. "/api/v1/scan".
 PATH_IN_TEXT = re.compile(r"""["'`](/[A-Za-z0-9_\-./]*[A-Za-z0-9_\-/](?:\?[^"'`\s<>]*)?)["'`]""")
 ATTR_LINK = re.compile(r"""(?:href|src|action)\s*=\s*["']([^"'#]+)["']""", re.IGNORECASE)
+# <meta http-equiv="refresh" content="0; url=main.html">
+META_REFRESH = re.compile(r"""content\s*=\s*["']\s*\d+\s*;\s*url\s*=\s*['"]?([^"'>\s]+)""", re.IGNORECASE)
+# location.href = "x", window.location = 'x', location.replace("x"), frames: <frame src=x>
+JS_REDIRECT = re.compile(
+    r"""location(?:\.href)?\s*=\s*["']([^"']+)["']|location\.(?:replace|assign)\(\s*["']([^"']+)["']""",
+    re.IGNORECASE,
+)
 # Words that make a response worth a human's attention.
 INTERESTING = re.compile(r"scan|resolution|duplex|adf|feeder|dpi|jpeg|pdf|twain|page|paper|job", re.IGNORECASE)
 
@@ -81,12 +96,14 @@ class Hit:
     saved_as: str = ""
     found_via: str = ""
     keywords: list[str] = field(default_factory=list)
+    preview: str = ""  # whole body, for short text pages
 
 
 @dataclass
 class Exploration:
     host: str
     ssh_banner: str = ""
+    open_ports: list[int] = field(default_factory=list)
     server_headers: list[str] = field(default_factory=list)
     hits: list[Hit] = field(default_factory=list)
     paths_seen_in_code: list[str] = field(default_factory=list)
@@ -107,7 +124,8 @@ def extract_links(base_url: str, body: str) -> list[str]:
     """Same-host paths referenced from an HTML/JS/JSON body."""
     found: list[str] = []
     host = urlsplit(base_url).netloc
-    for raw in ATTR_LINK.findall(body) + PATH_IN_TEXT.findall(body):
+    redirects = [a or b for a, b in JS_REDIRECT.findall(body)]
+    for raw in META_REFRESH.findall(body) + redirects + ATTR_LINK.findall(body) + PATH_IN_TEXT.findall(body):
         raw = raw.strip()
         if raw.startswith(("javascript:", "mailto:", "data:", "//")):
             continue
@@ -135,7 +153,9 @@ def _safe_name(path: str, n: int, ctype: str) -> str:
 
 def explore(host: str, port: int = 80, scheme: str = "http", out_dir: Path | None = None,
             max_requests: int = 80, timeout: float = 5.0) -> Exploration:
-    result = Exploration(host=host, ssh_banner=ssh_banner(host))
+    from .probe import scan_ports
+
+    result = Exploration(host=host, ssh_banner=ssh_banner(host), open_ports=scan_ports(host))
     base = f"{scheme}://{host}:{port}"
     endpoint = Endpoint(base, timeout=timeout, insecure=True)
     if out_dir:
@@ -169,6 +189,8 @@ def explore(host: str, port: int = 80, scheme: str = "http", out_dir: Path | Non
         if is_text:
             text = body.decode("utf-8", "replace")
             hit.keywords = sorted({m.lower() for m in INTERESTING.findall(text)})
+            if len(body) <= 400:
+                hit.preview = " ".join(text.split())
             for link in extract_links(endpoint.url(path), text):
                 if link not in code_paths:
                     code_paths.append(link)
@@ -188,6 +210,8 @@ def summarize(result: Exploration, limit: int = 40) -> str:
     lines = [f"Scanner {result.host}"]
     if result.ssh_banner:
         lines.append(f"  ssh: {result.ssh_banner}")
+    if result.open_ports:
+        lines.append(f"  open ports: {', '.join(map(str, result.open_ports))}")
     if result.server_headers:
         lines.append(f"  web server: {', '.join(result.server_headers)}")
     lines.append(f"  pages that answered: {len(result.hits)}")
@@ -195,6 +219,8 @@ def summarize(result: Exploration, limit: int = 40) -> str:
     for h in ranked[:limit]:
         kw = f"  [{', '.join(h.keywords)}]" if h.keywords else ""
         lines.append(f"  {h.status} {h.url}  {h.content_type or '?'} {h.size}B{kw}")
+        if h.preview:
+            lines.append(f"      | {h.preview[:400]}")
     if result.skipped_unsafe:
         lines.append("  not fetched because they may change the scanner:")
         for p in result.skipped_unsafe[:limit]:

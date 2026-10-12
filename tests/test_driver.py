@@ -309,6 +309,7 @@ class ExploreTests(unittest.TestCase):
         with FakePrivateUI() as fake, tempfile.TemporaryDirectory() as tmp:
             result = explore.explore("127.0.0.1", port=fake.port, out_dir=Path(tmp))
             urls = {h.url: h for h in result.hits}
+            self.assertIn("/ui/home.html", urls)
             self.assertIn("/js/app.js", urls)
             self.assertIn("/api/v2/status", urls)
             self.assertNotIn("/api/v2/scan/start", fake.gets)
@@ -325,6 +326,7 @@ class ExploreTests(unittest.TestCase):
                 self.assertTrue((Path(tmp) / h.saved_as).exists())
             text = explore.summarize(result)
             self.assertIn("200 /api/v2/status", text)
+            self.assertIn("| <html><meta http-equiv=", text)
 
     def test_ssh_banner(self):
         import socket
@@ -344,6 +346,16 @@ class ExploreTests(unittest.TestCase):
         threading.Thread(target=serve, daemon=True).start()
         self.assertEqual(ssh_banner("127.0.0.1", srv.getsockname()[1]), "SSH-2.0-dropbear_2019.78")
         srv.close()
+
+    def test_follows_meta_refresh_and_js_redirects(self):
+        from raven_driver.explore import extract_links
+
+        base = "http://10.10.10.254:80/"
+        self.assertEqual(
+            extract_links(base, '<meta http-equiv="refresh" content="0; URL=/web/home.html">'), ["/web/home.html"]
+        )
+        self.assertEqual(extract_links(base, "<script>window.location='app/index.html'</script>"), ["/app/index.html"])
+        self.assertEqual(extract_links(base, '<script>location.replace("main.cgi?p=1")</script>'), ["/main.cgi?p=1"])
 
     def test_extract_links_stays_on_host(self):
         from raven_driver.explore import extract_links

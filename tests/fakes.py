@@ -208,7 +208,8 @@ class _PrivateUIHandler(_Quiet):
     """A scanner with its own web app and JSON API, like many vendor devices."""
 
     PAGES = {
-        "/": (b'<html><title>Raven</title><script src="/js/app.js"></script>'
+        "/": (b'<html><meta http-equiv="refresh" content="0;url=/ui/home.html"></html>', "text/html"),
+        "/ui/home.html": (b'<html><title>Raven</title><script src="/js/app.js"></script>'
               b'<a href="/settings.html">Settings</a><a href="/cgi-bin/reboot.cgi">Reboot</a>'
               b'<a href="/admin?action=factoryReset">Reset</a></html>', "text/html"),
         "/js/app.js": (b'fetch("/api/v2/status");\nconst START = "/api/v2/scan/start";\n'
