@@ -363,6 +363,90 @@ class ExploreTests(unittest.TestCase):
             self.assertIn("/api/v2/status", out.getvalue())
 
 
+class LinkTests(unittest.TestCase):
+    NMCLI = (
+        "IP4.ADDRESS[1]:192.168.1.23/24\n"
+        "IP4.GATEWAY:\n"
+        "DHCP4.OPTION[1]:dhcp_lease_time = 86400\n"
+        "DHCP4.OPTION[2]:dhcp_server_identifier = 192.168.1.1\n"
+        "DHCP4.OPTION[3]:ip_address = 192.168.1.23\n"
+    )
+
+    def test_parse_device_show_without_gateway(self):
+        from raven_driver.wifidirect import parse_device_show
+
+        self.assertEqual(
+            parse_device_show(self.NMCLI), {"address": "192.168.1.23/24", "dhcp_server": "192.168.1.1"}
+        )
+
+    def test_parse_device_show_routers_option(self):
+        from raven_driver.wifidirect import parse_device_show
+
+        out = "IP4.ADDRESS[1]:10.5.0.9/24\nDHCP4.OPTION[4]:routers = 10.5.0.254\n"
+        self.assertEqual(parse_device_show(out)["gateway"], "10.5.0.254")
+
+    def test_candidates_without_gateway_use_dhcp_server_then_first_host(self):
+        from raven_driver.wifidirect import LinkInfo
+
+        link = LinkInfo(device="wlp9s0", address="192.168.1.23/24", dhcp_server="192.168.1.1")
+        self.assertEqual(link.candidates(), ["192.168.1.1"])
+        link = LinkInfo(device="wlp9s0", address="192.168.49.7/24")
+        self.assertEqual(link.candidates(), ["192.168.49.1"])
+
+    def test_candidates_skip_own_address(self):
+        from raven_driver.wifidirect import LinkInfo
+
+        self.assertEqual(LinkInfo(address="192.168.1.1/24").candidates(), [])
+
+    def test_routes_filtered_by_interface(self):
+        from raven_driver.wifidirect import parse_proc_route
+
+        text = (
+            "Iface\tDestination\tGateway\tFlags\n"
+            "enp3s0\t00000000\t0100A8C0\t0003\n"
+            "wlp9s0\t00000000\t0101A8C0\t0003\n"
+        )
+        self.assertEqual(parse_proc_route(text, iface="wlp9s0"), ["192.168.1.1"])
+
+    def _probe_only(self, link, hosts=()):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest import mock
+
+        from raven_driver import sweep
+
+        buf = StringIO()
+        with mock.patch("raven_driver.wifidirect.wait_for_link", return_value=link), \
+                mock.patch("raven_driver.sweep.sweep", return_value=[sweep.Host(h, [80]) for h in hosts]), \
+                mock.patch("raven_driver.cli._check_scanner_at", side_effect=lambda a, args: "private" if a == "192.168.1.77" else ""), \
+                redirect_stdout(buf):
+            rc = main(["direct", "--probe-only"])
+        return rc, buf.getvalue()
+
+    def test_no_address_explains_and_suggests_fixes(self):
+        from raven_driver.wifidirect import LinkInfo
+
+        rc, text = self._probe_only(LinkInfo(device="wlp9s0"))
+        self.assertEqual(rc, 1)
+        self.assertIn("connected but got no address", text)
+        self.assertIn("nmcli device disconnect wlp9s0", text)
+
+    def test_link_local_address_is_reported(self):
+        from raven_driver.wifidirect import LinkInfo
+
+        rc, text = self._probe_only(LinkInfo(device="wlp9s0", address="169.254.3.4/16"))
+        self.assertEqual(rc, 1)
+        self.assertIn("fallback address 169.254.3.4/16", text)
+
+    def test_sweeps_subnet_when_usual_addresses_are_silent(self):
+        from raven_driver.wifidirect import LinkInfo
+
+        rc, text = self._probe_only(LinkInfo(device="wlp9s0", address="192.168.1.23/24"), hosts=["192.168.1.77"])
+        self.assertEqual(rc, 2)
+        self.assertIn("Searching all of 192.168.1.0/24", text)
+        self.assertIn("Checking for the scanner at 192.168.1.77", text)
+
+
 class WifiDirectTests(unittest.TestCase):
     def test_parse_wifi_list_ranks_scanner_first_and_unescapes(self):
         from raven_driver.wifidirect import parse_wifi_list
@@ -394,6 +478,7 @@ class WifiDirectTests(unittest.TestCase):
 
         with FakeESCL(pages=1) as fake, tempfile.TemporaryDirectory() as tmp, \
                 mock.patch("raven_driver.mdns.browse", return_value=[]), \
+                mock.patch("raven_driver.wifidirect.have_nmcli", return_value=False), \
                 mock.patch("raven_driver.wifidirect.default_gateways", return_value=["127.0.0.1"]):
             out = Path(tmp) / "doc.pdf"
             rc = main(["scan", "--port", str(fake.port), "-o", str(out)])
@@ -405,7 +490,10 @@ class WifiDirectTests(unittest.TestCase):
         from io import StringIO
         from unittest import mock
 
-        with FakeESCL() as fake, mock.patch("raven_driver.wifidirect.wait_for_gateway", return_value=["127.0.0.1"]), \
+        from raven_driver.wifidirect import LinkInfo
+
+        link = LinkInfo(device="wlp9s0", address="127.0.0.5/32", gateway="127.0.0.1")
+        with FakeESCL() as fake, mock.patch("raven_driver.wifidirect.wait_for_link", return_value=link), \
                 mock.patch("raven_driver.cli.probe", side_effect=lambda h, **kw: probe(h, extra=[("http", fake.port)])):
             buf = StringIO()
             with redirect_stdout(buf):

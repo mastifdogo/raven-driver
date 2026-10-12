@@ -9,11 +9,12 @@ Joining uses NetworkManager's ``nmcli``, which most desktop distributions ship.
 from __future__ import annotations
 
 import difflib
+import ipaddress
 import re
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 LIKELY_NAMES = re.compile(r"direct|raven", re.IGNORECASE)  # e.g. DIRECT-xx-..., Raven-CB3
 
@@ -128,12 +129,17 @@ def connect(ssid: str, hidden: bool = False) -> None:
         raise RuntimeError(f"could not join {ssid!r}")
 
 
-def parse_proc_route(text: str) -> list[str]:
-    """Default gateways from /proc/net/route (hex, little-endian addresses)."""
+def parse_proc_route(text: str, iface: str | None = None, default_only: bool = True) -> list[str]:
+    """Gateways from /proc/net/route (hex, little-endian addresses).
+
+    With ``iface`` only that interface's routes count. ``default_only=False``
+    also returns gateways of non-default routes."""
     gateways = []
     for line in text.splitlines()[1:]:
         cols = line.split()
-        if len(cols) < 4 or cols[1] != "00000000":
+        if len(cols) < 4 or (default_only and cols[1] != "00000000"):
+            continue
+        if iface and cols[0] != iface:
             continue
         flags = int(cols[3], 16)
         if not flags & 0x2:  # RTF_GATEWAY
@@ -153,11 +159,95 @@ def default_gateways() -> list[str]:
         return []
 
 
-def wait_for_gateway(timeout: float = 20.0) -> list[str]:
+@dataclass
+class LinkInfo:
+    """What the computer knows about its link to the scanner's network."""
+
+    device: str = ""
+    address: str = ""  # e.g. "192.168.1.23/24"
+    gateway: str = ""
+    dhcp_server: str = ""
+    route_gateways: list[str] = field(default_factory=list)
+
+    @property
+    def network(self) -> ipaddress.IPv4Network | None:
+        if not self.address:
+            return None
+        return ipaddress.IPv4Interface(self.address).network
+
+    @property
+    def link_local(self) -> bool:
+        return self.address.startswith("169.254.")
+
+    def candidates(self) -> list[str]:
+        """Addresses where the scanner most likely is, best first."""
+        cands = [self.gateway, *self.route_gateways, self.dhcp_server]
+        net = self.network
+        if net is not None and not self.link_local and net.num_addresses > 2:
+            first = str(next(net.hosts()))
+            cands.append(first)
+        own = self.address.split("/")[0]
+        return [c for c in dict.fromkeys(cands) if c and c != own]
+
+
+def parse_device_show(output: str) -> dict[str, str]:
+    """Parse ``nmcli -t -f IP4.ADDRESS,IP4.GATEWAY,DHCP4.OPTION device show DEV``."""
+    info: dict[str, str] = {}
+    for line in output.splitlines():
+        key, _, value = line.partition(":")
+        key = key.split("[")[0].strip()
+        value = value.strip()
+        if key == "IP4.ADDRESS" and value and "address" not in info:
+            info["address"] = value
+        elif key == "IP4.GATEWAY" and value and value != "--":
+            info["gateway"] = value
+        elif key == "DHCP4.OPTION":
+            m = re.match(r"(\w+)\s*=\s*(\S+)", value)
+            if m and m.group(1) == "dhcp_server_identifier":
+                info["dhcp_server"] = m.group(2)
+            elif m and m.group(1) == "routers" and "gateway" not in info:
+                info["gateway"] = m.group(2).split()[0]
+    return info
+
+
+def active_wifi_device() -> str:
+    for dev, state in wifi_devices():
+        if state.startswith("connected"):
+            return dev
+    return ""
+
+
+def link_info(device: str | None = None) -> LinkInfo:
+    device = device or active_wifi_device()
+    info = LinkInfo(device=device)
+    if not device:
+        return info
+    try:
+        out = subprocess.run(
+            ["nmcli", "-t", "-f", "IP4.ADDRESS,IP4.GATEWAY,DHCP4.OPTION", "device", "show", device],
+            capture_output=True, text=True, timeout=15,
+        ).stdout
+        parsed = parse_device_show(out)
+    except (OSError, subprocess.SubprocessError):
+        parsed = {}
+    info.address = parsed.get("address", "")
+    info.gateway = parsed.get("gateway", "")
+    info.dhcp_server = parsed.get("dhcp_server", "")
+    try:
+        with open("/proc/net/route") as f:
+            info.route_gateways = parse_proc_route(f.read(), iface=device, default_only=False)
+    except OSError:
+        pass
+    return info
+
+
+def wait_for_link(timeout: float = 45.0, device: str | None = None) -> LinkInfo:
+    """Wait until the Wi-Fi device has a usable IPv4 address."""
     deadline = time.monotonic() + timeout
+    info = link_info(device)
     while time.monotonic() < deadline:
-        gws = default_gateways()
-        if gws:
-            return gws
-        time.sleep(1.0)
-    return []
+        if info.address and not info.link_local:
+            return info
+        time.sleep(1.5)
+        info = link_info(device)
+    return info

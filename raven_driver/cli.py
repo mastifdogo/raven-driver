@@ -151,7 +151,11 @@ def _pick_host(args) -> str:
     services = mdns.browse(timeout=3.0)
     if not services:
         # On Wi-Fi Direct the scanner is our router, so try the gateway.
-        for gw in wifidirect.default_gateways():
+        try:
+            nearby = wifidirect.link_info().candidates() if wifidirect.have_nmcli() else []
+        except (OSError, subprocess.SubprocessError, ValueError):
+            nearby = []
+        for gw in dict.fromkeys(nearby + wifidirect.default_gateways()):
             report = probe(gw, escl_root=args.escl_root, timeout=args.timeout, extra=_extra(args))
             if report.best():
                 print(f"Using the scanner at gateway {gw}", file=sys.stderr)
@@ -250,29 +254,61 @@ def cmd_scan(args) -> int:
     return 0
 
 
+def _check_scanner_at(addr: str, args) -> str:
+    """Probe one address. Returns "found", "private", or "" for no answer."""
+    report = probe(addr, timeout=args.timeout)
+    best = report.best()
+    if best:
+        print(f"  FOUND {best.protocol} scanner {best.model!r} at {addr}")
+        print(f"\nScan with:\n  {_prog()} scan {addr} -o scan.pdf")
+        return "found"
+    if report.open_ports:
+        print(f"  {addr} answers on ports {', '.join(map(str, report.open_ports))} but speaks")
+        print("  neither eSCL nor TWAIN Local, so it uses Raven's own protocol.")
+        print("  Map it with this read-only command and share the summary:")
+        print(f"    {_prog()} explore {addr}")
+        return "private"
+    print(f"  Nothing answered at {addr}.")
+    return ""
+
+
 def _report_gateways(args) -> int:
-    gateways = wifidirect.wait_for_gateway()
-    if not gateways:
-        print("Joined, but got no network address from the scanner. Wait a few")
-        print(f"seconds and run: {_prog()} direct --probe-only")
+    print("Waiting for the scanner to give this computer a network address...")
+    link = wifidirect.wait_for_link()
+    if not link.device:
+        print("This computer is not connected to any Wi-Fi network right now.")
+        print(f"Join the scanner's network first: {_prog()} direct --ssid 'NAME'")
         return 1
-    found = 0
-    for gw in gateways:
-        print(f"\nChecking the scanner at {gw}...")
-        report = probe(gw, timeout=args.timeout)
-        best = report.best()
-        if best:
-            found += 1
-            print(f"  FOUND {best.protocol} scanner {best.model!r} at {gw}")
-            print(f"\nScan with:\n  {_prog()} scan {gw} -o scan.pdf")
-        elif report.open_ports:
-            print(f"  {gw} answers on ports {', '.join(map(str, report.open_ports))} but speaks")
-            print("  neither eSCL nor TWAIN Local, so it uses Raven's own protocol.")
-            print("  Map it with this read-only command and share the summary:")
-            print(f"    {_prog()} explore {gw}")
-        else:
-            print(f"  Nothing answered at {gw}. You may be on your home network, not the scanner's.")
-    return 0 if found else 2
+    if not link.address or link.link_local:
+        got = f"only the fallback address {link.address}" if link.address else "no address"
+        print(f"Wi-Fi device {link.device} is connected but got {got} from the scanner.")
+        print("The scanner did not answer this computer's address request. Try, in order:")
+        print("  1. Reconnect:  nmcli device disconnect " + link.device + " && " + _prog() + " direct --ssid 'NAME'")
+        print("  2. Turn the scanner's Wi-Fi Direct off and on, then reconnect.")
+        print("  3. Show what the computer sees, and share it:")
+        print(f"       nmcli -f GENERAL.CONNECTION,IP4,DHCP4 device show {link.device}")
+        return 1
+    print(f"Wi-Fi device {link.device} has address {link.address}.")
+    candidates = link.candidates()
+    for addr in candidates:
+        print(f"\nChecking for the scanner at {addr}...")
+        outcome = _check_scanner_at(addr, args)
+        if outcome:
+            return 0 if outcome == "found" else 2
+    net = link.network
+    if net is not None and net.prefixlen >= 24:
+        print(f"\nNot at the usual addresses. Searching all of {net}...")
+        hosts = sweep.sweep([net])
+        for h in hosts:
+            if h.address in candidates:
+                continue
+            print(f"\nChecking for the scanner at {h.address}...")
+            outcome = _check_scanner_at(h.address, args)
+            if outcome:
+                return 0 if outcome == "found" else 2
+    print("\nNo device on the scanner's network answered. Share the output of:")
+    print(f"  nmcli -f GENERAL.CONNECTION,IP4,DHCP4 device show {link.device}")
+    return 2
 
 
 def _print_networks(networks, file=None) -> None:
