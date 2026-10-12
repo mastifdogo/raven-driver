@@ -11,7 +11,7 @@ from pathlib import Path
 
 import ipaddress
 
-from . import __version__, explore, mdns, sweep, wifidirect
+from . import __version__, avision, explore, mdns, sweep, wifidirect
 from .escl import PAGE_SIZES, ESCLError, ESCLScanner, ScanRequest
 from .http import Endpoint, HTTPFailure
 from .pdf import NotJPEG, jpegs_to_pdf
@@ -141,6 +141,13 @@ def cmd_probe(args) -> int:
             print("\nThis scanner also works with any SANE frontend through sane-airscan:")
             print(f"  {_prog()} sane-config {args.host}")
         return 0
+    box = avision.read_info(args.host) if 5549 in report.open_ports or args.port == 5549 else None
+    if box:
+        print(f"\nThis is an Avision network box serving {box.describe()}.")
+        print("It does not speak eSCL or TWAIN Local. To test whether it passes")
+        print("Avision scanner commands through, run:")
+        print(f"  {_prog()} avision-inquiry {args.host}")
+        return 2
     print("\nNo supported protocol found. The scanner may use Raven's private protocol.")
     print(f"Map it with `{_prog()} explore {args.host}` and share the summary,")
     print("or follow docs/REVERSE_ENGINEERING.md.")
@@ -322,6 +329,13 @@ def _report_gateways(args) -> int:
                 return 0
             if outcome:
                 answered.append(h.address)
+    for addr in answered:
+        box = avision.read_info(addr)
+        if box:
+            print(f"\nThe scanner is at {addr}: an Avision network box serving {box.describe()}.")
+            print("To test whether it passes Avision scanner commands through, run:")
+            print(f"  {_prog()} avision-inquiry {addr}")
+            return 2
     if answered:
         print(f"\nThe scanner is most likely {answered[0]}. It speaks Raven's own protocol.")
         print("Map it with this read-only command and share the summary:")
@@ -451,6 +465,33 @@ def cmd_explore(args) -> int:
     return 0
 
 
+def cmd_avision_inquiry(args) -> int:
+    info = avision.read_info(args.host)
+    if info:
+        print(f"Port {avision.INFO_PORT}: {info.describe()}")
+    else:
+        print(f"Port {avision.INFO_PORT}: no device information (is this the scanner's address?)")
+    print(f"Sending one read-only INQUIRY command to port {args.port}...")
+    print("If the scanner stops responding afterwards, switch it off and on again.\n")
+    result = avision.inquiry_experiment(args.host, args.port, timeout=args.timeout)
+    if result.error:
+        _err(f"could not talk to {args.host}:{args.port}: {result.error}")
+        return 1
+    print(f"Greeting ({len(result.greeting)} bytes):")
+    print(avision.hexdump(result.greeting) or "  (none)")
+    print(f"\nReply to INQUIRY ({len(result.reply)} bytes):")
+    print(avision.hexdump(result.reply) or "  (none: the box ignored the command or expects another format)")
+    if result.strings:
+        print("\nText in the reply: " + " | ".join(result.strings))
+    if result.looks_like_scanner:
+        print("\nThe scanner answered directly. Port 5551 passes Avision commands through,")
+        print("so scanning can be built on SANE's Avision protocol. Share this output.")
+    else:
+        print("\nNo scanner identity in the reply. The box wraps commands in its own format,")
+        print("so a recording of the official software is needed. Share this output.")
+    return 0
+
+
 def cmd_sane_config(args) -> int:
     report = probe(args.host, escl_root=args.escl_root, timeout=args.timeout, extra=_extra(args))
     escl = [d for d in report.detected if d.protocol == "escl"]
@@ -513,6 +554,12 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--max-requests", type=int, default=80)
     e.add_argument("--all-ports", action="store_true", help="check all 65535 TCP ports, not just common ones")
     e.set_defaults(func=cmd_explore)
+
+    a = sub.add_parser("avision-inquiry", help="experiment: send one read-only INQUIRY through the Avision box")
+    a.add_argument("host", help="scanner address, e.g. 10.10.10.254")
+    a.add_argument("--port", type=int, default=5551)
+    a.add_argument("--timeout", type=float, default=5.0)
+    a.set_defaults(func=cmd_avision_inquiry)
 
     w = sub.add_parser("direct", help="connect to the scanner over Wi-Fi Direct")
     w.add_argument("--ssid", help="the scanner's Wi-Fi Direct network name")

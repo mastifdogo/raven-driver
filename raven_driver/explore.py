@@ -83,6 +83,9 @@ UNSAFE = re.compile(
     re.IGNORECASE,
 )
 
+# Command names used by CGI-driven admin apps, e.g. WiFiDriveCtrl.cgi?...&cmd_get_lang
+CGI_COMMAND = re.compile(r"\bcmd_[A-Za-z0-9_]+")
+
 TEXT_TYPES = ("text/", "json", "xml", "javascript", "ecmascript")
 MAX_BODY = 2 * 1024 * 1024
 
@@ -110,6 +113,7 @@ class Exploration:
     paths_seen_in_code: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     skipped_unsafe: list[str] = field(default_factory=list)
+    cgi_commands: list[str] = field(default_factory=list)
 
 
 def ssh_banner(host: str, port: int = 22, timeout: float = 3.0) -> str:
@@ -198,6 +202,17 @@ def explore(host: str, port: int = 80, scheme: str = "http", out_dir: Path | Non
                     code_paths.append(link)
                 if link not in seen:
                     queue.append((link, f"linked from {path}"))
+            for name in CGI_COMMAND.findall(text):
+                if name not in result.cgi_commands:
+                    result.cgi_commands.append(name)
+                    # Read-only "get" commands are fetched through any CGI
+                    # URL we have already seen carry a command.
+                    if name.startswith("cmd_get_"):
+                        for known in list(seen) + [p for p, _ in queue]:
+                            m = re.match(r"(.*[?&])cmd_[A-Za-z0-9_]+(.*)$", known)
+                            if m:
+                                queue.append((m.group(1) + name + m.group(2), f"command named in {path}"))
+                                break
         if out_dir:
             hit.saved_as = _safe_name(path, len(result.hits) + 1, ctype)
             (out_dir / hit.saved_as).write_bytes(body)
@@ -225,6 +240,10 @@ def summarize(result: Exploration, limit: int = 40) -> str:
             lines.append(f"      password prompt: {h.auth}")
         elif h.preview:
             lines.append(f"      | {h.preview[:400]}")
+    if result.cgi_commands:
+        lines.append(f"  commands named in the scanner's scripts ({len(result.cgi_commands)}):")
+        for i in range(0, len(result.cgi_commands), 4):
+            lines.append("    " + "  ".join(result.cgi_commands[i : i + 4]))
     if result.skipped_unsafe:
         lines.append("  not fetched because they may change the scanner:")
         for p in result.skipped_unsafe[:limit]:

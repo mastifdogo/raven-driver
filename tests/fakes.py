@@ -211,11 +211,15 @@ class _PrivateUIHandler(_Quiet):
         "/": (b'<html><meta http-equiv="refresh" content="0;url=/ui/home.html"></html>', "text/html"),
         "/ui/home.html": (b'<html><title>Raven</title><script src="/js/app.js"></script>'
               b'<a href="/settings.html">Settings</a><a href="/cgi-bin/reboot.cgi">Reboot</a>'
-              b'<a href="/admin?action=factoryReset">Reset</a></html>', "text/html"),
+              b'<a href="/admin?action=factoryReset">Reset</a><script src="/js/ctrl.js"></script></html>', "text/html"),
         "/js/app.js": (b'fetch("/api/v2/status");\nconst START = "/api/v2/scan/start";\n'
                        b"post('/api/v2/scan/start', {dpi: 300});", "application/javascript"),
         "/settings.html": (b"<html>Duplex: <form action='/cgi-bin/save'></form></html>", "text/html"),
         "/api/v2/status": (b'{"state":"idle","resolution":[200,300,600],"adf":"loaded"}', "application/json"),
+        "/js/ctrl.js": (b'var CGI = "/cgi-bin/Ctrl.cgi?Vendor&cmd_get_lang";\n'
+                        b'ajax(base + "cmd_get_fw_version"); ajax(base + "cmd_set_reboot");', "application/javascript"),
+        "/cgi-bin/Ctrl.cgi?Vendor&cmd_get_lang": (b"<Language>0</Language>", "text/xml"),
+        "/cgi-bin/Ctrl.cgi?Vendor&cmd_get_fw_version": (b"<Version>1.0.2</Version>", "text/xml"),
     }
 
     def do_GET(self):

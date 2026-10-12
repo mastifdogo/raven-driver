@@ -324,7 +324,11 @@ class ExploreTests(unittest.TestCase):
             self.assertEqual(len(saved["hits"]), len(result.hits))
             for h in result.hits:
                 self.assertTrue((Path(tmp) / h.saved_as).exists())
+            self.assertIn("/cgi-bin/Ctrl.cgi?Vendor&cmd_get_fw_version", fake.gets)
+            self.assertNotIn("/cgi-bin/Ctrl.cgi?Vendor&cmd_set_reboot", fake.gets)
+            self.assertEqual(result.cgi_commands, ["cmd_get_lang", "cmd_get_fw_version", "cmd_set_reboot"])
             text = explore.summarize(result)
+            self.assertIn("cmd_set_reboot", text)
             self.assertIn("200 /api/v2/status", text)
             self.assertIn("| <html><meta http-equiv=", text)
 
@@ -456,6 +460,80 @@ class GreetingTests(unittest.TestCase):
         r = Exploration(host="10.10.10.254", hits=[Hit("/Control/index.htm", 401, "text/html", 351,
                                                        auth='Basic realm="Wireless Scanner"')])
         self.assertIn('password prompt: Basic realm="Wireless Scanner"', summarize(r))
+
+
+class AvisionBoxTests(unittest.TestCase):
+    def test_parse_info_from_real_greeting(self):
+        from raven_driver.avision import parse_info
+
+        info = parse_info("0638&3200&B103843122290367.")
+        self.assertEqual((info.vendor, info.product, info.serial), (0x0638, 0x3200, "B103843122290367"))
+        self.assertTrue(info.is_avision)
+        self.assertIn("0638:3200 (Avision)", info.describe())
+        self.assertIsNone(parse_info("SUCCESS"))
+
+    def test_inquiry_cdb_is_padded_to_ten_bytes(self):
+        from raven_driver.avision import inquiry_cdb
+
+        self.assertEqual(inquiry_cdb(), bytes([0x12, 0, 0, 0, 0x60, 0, 0, 0, 0, 0]))
+
+    def _box(self, reply_for_inquiry: bytes):
+        import socket
+        import threading
+
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        got = {}
+
+        def serve():
+            conn, _ = srv.accept()
+            with conn:
+                conn.sendall(b"SUCCESS\x00")
+                got["cmd"] = conn.recv(64)
+                if reply_for_inquiry:
+                    conn.sendall(reply_for_inquiry)
+                conn.settimeout(2)
+                try:
+                    conn.recv(64)
+                except OSError:
+                    pass
+
+        threading.Thread(target=serve, daemon=True).start()
+        return srv, got
+
+    def test_inquiry_through_passthrough_box(self):
+        from raven_driver.avision import inquiry_experiment
+
+        reply = bytes([0x06, 0, 2, 2, 0x5B, 0, 0, 0]) + b"AVISION AV3200 Scanner     1.00" + bytes(57) + b"\x00"
+        srv, got = self._box(reply)
+        result = inquiry_experiment("127.0.0.1", srv.getsockname()[1], timeout=1)
+        srv.close()
+        self.assertEqual(got["cmd"][:1], b"\x12")
+        self.assertEqual(result.greeting, b"SUCCESS\x00")
+        self.assertTrue(result.looks_like_scanner)
+        self.assertIn("AVISION AV3200 Scanner     1.00", result.strings)
+
+    def test_inquiry_ignored_by_wrapping_box(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest import mock
+
+        srv, _ = self._box(b"")
+        buf = StringIO()
+        with mock.patch("raven_driver.avision.read_info", return_value=None), redirect_stdout(buf):
+            rc = main(["avision-inquiry", "127.0.0.1", "--port", str(srv.getsockname()[1]), "--timeout", "1"])
+        srv.close()
+        self.assertEqual(rc, 0)
+        self.assertIn("the box ignored the command", buf.getvalue())
+        self.assertIn("recording of the official software", buf.getvalue())
+
+    def test_hexdump(self):
+        from raven_driver.avision import hexdump
+
+        line = hexdump(b"SUCCESS\x00")
+        self.assertTrue(line.startswith("0000  53 55 43 43 45 53 53 00 "))
+        self.assertTrue(line.endswith(" SUCCESS."))
 
 
 class LinkTests(unittest.TestCase):
