@@ -364,6 +364,8 @@ class ExploreTests(unittest.TestCase):
 
 
 class LinkTests(unittest.TestCase):
+    clashes: list = []
+
     NMCLI = (
         "IP4.ADDRESS[1]:192.168.1.23/24\n"
         "IP4.GATEWAY:\n"
@@ -417,6 +419,7 @@ class LinkTests(unittest.TestCase):
 
         buf = StringIO()
         with mock.patch("raven_driver.wifidirect.wait_for_link", return_value=link), \
+                mock.patch("raven_driver.wifidirect.overlapping_interfaces", return_value=self.clashes), \
                 mock.patch("raven_driver.sweep.sweep", return_value=[sweep.Host(h, [80]) for h in hosts]), \
                 mock.patch("raven_driver.cli._check_scanner_at", side_effect=lambda a, args: "private" if a == "192.168.1.77" else ""), \
                 redirect_stdout(buf):
@@ -437,6 +440,31 @@ class LinkTests(unittest.TestCase):
         rc, text = self._probe_only(LinkInfo(device="wlp9s0", address="169.254.3.4/16"))
         self.assertEqual(rc, 1)
         self.assertIn("fallback address 169.254.3.4/16", text)
+
+    def test_overlap_with_wired_network_stops_with_instructions(self):
+        from raven_driver.wifidirect import LinkInfo
+
+        self.clashes = [("enp4s0", "192.168.1.50/24")]
+        rc, text = self._probe_only(LinkInfo(device="wlp9s0", address="192.168.1.23/24", gateway="192.168.1.1"))
+        self.assertEqual(rc, 1)
+        self.assertIn("overlaps another connection: enp4s0 (192.168.1.50/24)", text)
+        self.assertIn("nmcli device disconnect enp4s0", text)
+        self.assertNotIn("Checking for the scanner", text)
+
+    def test_overlapping_interfaces(self):
+        from raven_driver.wifidirect import LinkInfo, overlapping_interfaces, parse_ip_addr
+
+        out = (
+            "1: lo    inet 127.0.0.1/8 scope host lo\\       valid_lft forever\n"
+            "2: enp4s0    inet 192.168.1.50/24 brd 192.168.1.255 scope global enp4s0\n"
+            "3: wlp9s0    inet 192.168.1.23/24 brd 192.168.1.255 scope global wlp9s0\n"
+        )
+        addrs = parse_ip_addr(out)
+        self.assertEqual(len(addrs), 3)
+        link = LinkInfo(device="wlp9s0", address="192.168.1.23/24")
+        self.assertEqual(overlapping_interfaces(link, addrs), [("enp4s0", "192.168.1.50/24")])
+        link = LinkInfo(device="wlp9s0", address="192.168.49.2/24")
+        self.assertEqual(overlapping_interfaces(link, addrs), [])
 
     def test_sweeps_subnet_when_usual_addresses_are_silent(self):
         from raven_driver.wifidirect import LinkInfo

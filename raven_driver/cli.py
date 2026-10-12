@@ -289,6 +289,17 @@ def _report_gateways(args) -> int:
         print(f"       nmcli -f GENERAL.CONNECTION,IP4,DHCP4 device show {link.device}")
         return 1
     print(f"Wi-Fi device {link.device} has address {link.address}.")
+    clashes = wifidirect.overlapping_interfaces(link)
+    if clashes:
+        others = ", ".join(f"{dev} ({cidr})" for dev, cidr in clashes)
+        print(f"\nThe scanner's network {link.network} overlaps another connection: {others}.")
+        print("Traffic meant for the scanner could reach your home router instead, so")
+        print("results would be wrong. Disconnect the other connection while scanning:")
+        for dev, _ in clashes:
+            print(f"  nmcli device disconnect {dev}")
+        print(f"Then run: {_prog()} direct --probe-only")
+        print("Reconnect it afterwards with: nmcli device connect " + clashes[0][0])
+        return 1
     candidates = link.candidates()
     for addr in candidates:
         print(f"\nChecking for the scanner at {addr}...")

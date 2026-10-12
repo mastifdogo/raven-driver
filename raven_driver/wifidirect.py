@@ -251,3 +251,32 @@ def wait_for_link(timeout: float = 45.0, device: str | None = None) -> LinkInfo:
         time.sleep(1.5)
         info = link_info(device)
     return info
+
+
+def parse_ip_addr(output: str) -> list[tuple[str, str]]:
+    """(device, address/prefix) pairs from ``ip -4 -o addr show``."""
+    return re.findall(r"^\d+:\s+(\S+)\s+inet\s+(\d+\.\d+\.\d+\.\d+/\d+)", output, re.MULTILINE)
+
+
+def overlapping_interfaces(link: LinkInfo, addrs: list[tuple[str, str]] | None = None) -> list[tuple[str, str]]:
+    """Other interfaces whose network overlaps the scanner's network.
+
+    If the wired network and the scanner's Wi-Fi Direct network share a range
+    such as 192.168.1.0/24, traffic meant for the scanner can go out the wired
+    link to the home router instead."""
+    net = link.network
+    if net is None:
+        return []
+    if addrs is None:
+        try:
+            out = subprocess.run(["ip", "-4", "-o", "addr", "show"], capture_output=True, text=True, timeout=5).stdout
+        except (OSError, subprocess.SubprocessError):
+            return []
+        addrs = parse_ip_addr(out)
+    clashes = []
+    for dev, cidr in addrs:
+        if dev == link.device or dev == "lo":
+            continue
+        if ipaddress.IPv4Interface(cidr).network.overlaps(net):
+            clashes.append((dev, cidr))
+    return clashes
