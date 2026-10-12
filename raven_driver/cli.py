@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
 import ipaddress
 
-from . import __version__, mdns, sweep
+from . import __version__, mdns, sweep, wifidirect
 from .escl import PAGE_SIZES, ESCLError, ESCLScanner, ScanRequest
 from .http import Endpoint, HTTPFailure
 from .pdf import NotJPEG, jpegs_to_pdf
@@ -141,6 +142,12 @@ def _pick_host(args) -> str:
         return args.host
     services = mdns.browse(timeout=3.0)
     if not services:
+        # On Wi-Fi Direct the scanner is our router, so try the gateway.
+        for gw in wifidirect.default_gateways():
+            report = probe(gw, escl_root=args.escl_root, timeout=args.timeout, extra=_extra(args))
+            if report.best():
+                print(f"Using the scanner at gateway {gw}", file=sys.stderr)
+                return gw
         raise SystemExit("raven-scan: no scanner found on the network; pass its IP address")
     raven = [s for s in services if "raven" in (s.name + str(s.txt)).lower()]
     chosen = (raven or services)[0]
@@ -235,6 +242,66 @@ def cmd_scan(args) -> int:
     return 0
 
 
+def _report_gateways(args) -> int:
+    gateways = wifidirect.wait_for_gateway()
+    if not gateways:
+        print("Joined, but got no network address from the scanner. Wait a few")
+        print("seconds and run: raven-scan direct --probe-only")
+        return 1
+    found = 0
+    for gw in gateways:
+        print(f"\nChecking the scanner at {gw}...")
+        report = probe(gw, timeout=args.timeout)
+        best = report.best()
+        if best:
+            found += 1
+            print(f"  FOUND {best.protocol} scanner {best.model!r} at {gw}")
+            print(f"\nScan with:\n  raven-scan scan {gw} -o scan.pdf")
+        elif report.open_ports:
+            print(f"  {gw} answers on ports {', '.join(map(str, report.open_ports))} but speaks")
+            print("  neither eSCL nor TWAIN Local. Send the output of:")
+            print(f"    raven-scan probe --json {gw}")
+        else:
+            print(f"  Nothing answered at {gw}. You may be on your home network, not the scanner's.")
+    return 0 if found else 2
+
+
+def cmd_direct(args) -> int:
+    if args.probe_only:
+        return _report_gateways(args)
+    if not wifidirect.have_nmcli():
+        print("nmcli (NetworkManager) is not installed. Join the scanner's Wi-Fi network")
+        print("from your desktop's Wi-Fi menu, then run: raven-scan direct --probe-only")
+        return 1
+    try:
+        networks = wifidirect.list_networks()
+    except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+        _err(f"could not list Wi-Fi networks: {exc}")
+        return 1
+    if not args.ssid:
+        if not networks:
+            print("No Wi-Fi networks found. Is this computer's Wi-Fi on?")
+            return 1
+        print("Wi-Fi networks in range (likely scanner networks first):\n")
+        for n in networks:
+            mark = "*" if n.likely_scanner else " "
+            used = "  (connected)" if n.in_use else ""
+            print(f" {mark} {n.ssid:<32} signal {n.signal:>3}  {n.security or 'open'}{used}")
+        print("\nJoin the scanner's network with:\n  raven-scan direct --ssid 'NAME'")
+        return 0
+    if args.ssid not in {n.ssid for n in networks}:
+        _err(f"{args.ssid!r} is not in range. Is Wi-Fi Direct turned on at the scanner?")
+        return 1
+    print(f"Joining {args.ssid}. This computer leaves its current Wi-Fi network,")
+    print("so it has no internet until you switch back.")
+    try:
+        wifidirect.connect(args.ssid)
+    except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+        _err(str(exc))
+        return 1
+    return _report_gateways(args)
+
+
 def cmd_sane_config(args) -> int:
     report = probe(args.host, escl_root=args.escl_root, timeout=args.timeout, extra=_extra(args))
     escl = [d for d in report.detected if d.protocol == "escl"]
@@ -288,6 +355,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--page-size", choices=sorted(PAGE_SIZES), default="letter")
     s.add_argument("--insecure", action="store_true", help="accept the scanner's self-signed TLS certificate")
     s.set_defaults(func=cmd_scan)
+
+    w = sub.add_parser("direct", help="connect to the scanner over Wi-Fi Direct")
+    w.add_argument("--ssid", help="the scanner's Wi-Fi Direct network name")
+    w.add_argument("--probe-only", action="store_true", help="already joined; just find the scanner")
+    w.add_argument("--timeout", type=float, default=4.0)
+    w.set_defaults(func=cmd_direct)
 
     c = sub.add_parser("sane-config", help="print a sane-airscan config line for this scanner")
     conn_opts(c)

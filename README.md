@@ -31,10 +31,31 @@ pip install --user .        # installs the `raven-scan` command
 python3 -m raven_driver --help
 ```
 
-## Connect the scanner to Wi-Fi
+## Connect over Wi-Fi Direct
 
-The Compact must join your network before Linux can see it. Do this once,
-using either method:
+If the scanner will not join your home network, connect to it directly. In
+Wi-Fi Direct mode the scanner hosts its own Wi-Fi network, and your computer
+joins that network instead of your home one. While joined, your computer has
+no internet.
+
+```sh
+raven-scan direct                          # list networks; scanner ones first
+raven-scan direct --ssid 'DIRECT-xx-Raven'   # join it and find the scanner
+raven-scan scan -o scan.pdf                # scans from the scanner it found
+```
+
+`direct` uses NetworkManager's `nmcli` and asks for the network password on
+the terminal. The password is on the scanner's label or in its manual. You can
+also join the network from your desktop's Wi-Fi menu and then run
+`raven-scan direct --probe-only`.
+
+On Wi-Fi Direct the scanner is your computer's router, so `scan` with no
+address tries the router address automatically.
+
+## Connect the scanner to your Wi-Fi network
+
+The Compact must join your network before Linux can see it there. Do this
+once, using either method:
 
 * **With WPS:** press your router's WPS button, then the scanner's WPS button.
 * **With Raven Desktop:** on a Windows or macOS computer, choose the wireless

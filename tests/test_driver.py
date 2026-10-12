@@ -217,5 +217,56 @@ class UnreachableAndSweepTests(unittest.TestCase):
             self.assertGreaterEqual(net.prefixlen, 24)
 
 
+class WifiDirectTests(unittest.TestCase):
+    def test_parse_wifi_list_ranks_scanner_first_and_unescapes(self):
+        from raven_driver.wifidirect import parse_wifi_list
+
+        out = (
+            "*:HomeNet:80:WPA2\n"
+            " :DIRECT-7f-Raven Compact:55:WPA2\n"
+            " :DIRECT-7f-Raven Compact:40:WPA2\n"
+            " :Cafe\\:Guest:90:\n"
+            " ::30:WPA2\n"
+        )
+        nets = parse_wifi_list(out)
+        self.assertEqual([n.ssid for n in nets], ["DIRECT-7f-Raven Compact", "Cafe:Guest", "HomeNet"])
+        self.assertEqual(nets[0].signal, 55)
+        self.assertTrue(nets[2].in_use)
+
+    def test_parse_proc_route(self):
+        from raven_driver.wifidirect import parse_proc_route
+
+        text = (
+            "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\n"
+            "wlan0\t00000000\t0131A8C0\t0003\t0\t0\t600\t00000000\n"
+            "wlan0\t0031A8C0\t00000000\t0001\t0\t0\t600\t00FFFFFF\n"
+        )
+        self.assertEqual(parse_proc_route(text), ["192.168.49.1"])
+
+    def test_scan_without_host_falls_back_to_gateway(self):
+        from unittest import mock
+
+        with FakeESCL(pages=1) as fake, tempfile.TemporaryDirectory() as tmp, \
+                mock.patch("raven_driver.mdns.browse", return_value=[]), \
+                mock.patch("raven_driver.wifidirect.default_gateways", return_value=["127.0.0.1"]):
+            out = Path(tmp) / "doc.pdf"
+            rc = main(["scan", "--port", str(fake.port), "-o", str(out)])
+            self.assertEqual(rc, 0)
+            self.assertIn(b"/Count 1", out.read_bytes())
+
+    def test_direct_probe_only_reports_scanner(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest import mock
+
+        with FakeESCL() as fake, mock.patch("raven_driver.wifidirect.wait_for_gateway", return_value=["127.0.0.1"]), \
+                mock.patch("raven_driver.cli.probe", side_effect=lambda h, **kw: probe(h, extra=[("http", fake.port)])):
+            buf = StringIO()
+            with redirect_stdout(buf):
+                rc = main(["direct", "--probe-only"])
+        self.assertEqual(rc, 0)
+        self.assertIn("FOUND escl scanner 'Raven Compact' at 127.0.0.1", buf.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
