@@ -217,6 +217,91 @@ class UnreachableAndSweepTests(unittest.TestCase):
             self.assertGreaterEqual(net.prefixlen, 24)
 
 
+class SSIDMatchTests(unittest.TestCase):
+    def _nets(self, *names):
+        from raven_driver.wifidirect import Network
+
+        return [Network(n, 50, "WPA2") for n in names]
+
+    def test_exact_case_and_partial_matches(self):
+        from raven_driver.wifidirect import match_ssid
+
+        nets = self._nets("HomeNet", "raven-cb3a1f", "Neighbour")
+        self.assertEqual(match_ssid("raven-cb3a1f", nets)[0].ssid, "raven-cb3a1f")
+        self.assertEqual(match_ssid("RAVEN-CB3A1F", nets)[0].ssid, "raven-cb3a1f")
+        self.assertEqual(match_ssid("Raven-CB3", nets)[0].ssid, "raven-cb3a1f")
+
+    def test_no_match_gives_suggestions(self):
+        from raven_driver.wifidirect import match_ssid
+
+        match, suggestions = match_ssid("Raven-CB3", self._nets("Raven-C83", "HomeNet"))
+        self.assertIsNone(match)
+        self.assertEqual(suggestions, ["Raven-C83"])
+
+    def test_ambiguous_partial_is_not_guessed(self):
+        from raven_driver.wifidirect import match_ssid
+
+        match, suggestions = match_ssid("raven", self._nets("Raven-1", "Raven-2"))
+        self.assertIsNone(match)
+        self.assertEqual(sorted(suggestions), ["Raven-1", "Raven-2"])
+
+    def test_parse_devices(self):
+        from raven_driver.wifidirect import parse_devices
+
+        out = "enp3s0:ethernet:connected\nwlp2s0:wifi:disconnected\nlo:loopback:unmanaged\n"
+        self.assertEqual(parse_devices(out), [("wlp2s0", "disconnected")])
+
+
+class DirectCommandTests(unittest.TestCase):
+    def _run(self, argv, devices, networks=()):
+        from contextlib import redirect_stderr, redirect_stdout
+        from io import StringIO
+        from unittest import mock
+
+        from raven_driver.wifidirect import Network
+
+        nets = [Network(n, 60, "WPA2") for n in networks]
+        out, err = StringIO(), StringIO()
+        with mock.patch("raven_driver.wifidirect.have_nmcli", return_value=True), \
+                mock.patch("raven_driver.wifidirect.wifi_devices", return_value=devices), \
+                mock.patch("raven_driver.wifidirect.list_networks", return_value=nets), \
+                mock.patch("raven_driver.wifidirect.connect") as connect, \
+                mock.patch("raven_driver.cli._report_gateways", return_value=0), \
+                redirect_stdout(out), redirect_stderr(err):
+            rc = main(argv)
+        return rc, out.getvalue() + err.getvalue(), connect
+
+    def test_no_wifi_adapter(self):
+        rc, text, connect = self._run(["direct", "--ssid", "Raven-CB3"], devices=[])
+        self.assertEqual(rc, 1)
+        self.assertIn("no Wi-Fi adapter", text)
+        connect.assert_not_called()
+
+    def test_wifi_radio_off(self):
+        rc, text, _ = self._run(["direct", "--ssid", "Raven-CB3"], devices=[("wlan0", "unavailable")])
+        self.assertIn("nmcli radio wifi on", text)
+
+    def test_not_visible_lists_networks(self):
+        rc, text, connect = self._run(
+            ["direct", "--ssid", "Raven-CB3"], [("wlan0", "connected")], ["HomeNet", "Raven-C83"]
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("Did you mean: 'Raven-C83'", text)
+        self.assertIn("HomeNet", text)
+        self.assertIn("--hidden", text)
+        connect.assert_not_called()
+
+    def test_partial_name_joins_full_name(self):
+        rc, _, connect = self._run(["direct", "--ssid", "Raven-CB3"], [("wlan0", "connected")], ["Raven-CB3A1F"])
+        self.assertEqual(rc, 0)
+        connect.assert_called_once_with("Raven-CB3A1F", hidden=False)
+
+    def test_hidden_skips_visibility_check(self):
+        rc, _, connect = self._run(["direct", "--ssid", "Raven-CB3", "--hidden"], [("wlan0", "connected")])
+        self.assertEqual(rc, 0)
+        connect.assert_called_once_with("Raven-CB3", hidden=True)
+
+
 class WifiDirectTests(unittest.TestCase):
     def test_parse_wifi_list_ranks_scanner_first_and_unescapes(self):
         from raven_driver.wifidirect import parse_wifi_list

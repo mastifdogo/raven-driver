@@ -49,6 +49,11 @@ the terminal. The password is on the scanner's label or in its manual. You can
 also join the network from your desktop's Wi-Fi menu and then run
 `raven-scan direct --probe-only`.
 
+If `direct` says the network is not visible, it lists the networks it can
+see. A partial name such as `Raven-CB3` is enough when only one network
+matches. For a hidden network, add `--hidden`. The computer needs a Wi-Fi
+adapter: many desktop PCs have none, and `nmcli device` shows whether yours does.
+
 On Wi-Fi Direct the scanner is your computer's router, so `scan` with no
 address tries the router address automatically.
 

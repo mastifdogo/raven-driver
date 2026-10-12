@@ -8,13 +8,14 @@ Joining uses NetworkManager's ``nmcli``, which most desktop distributions ship.
 
 from __future__ import annotations
 
+import difflib
 import re
 import shutil
 import subprocess
 import time
 from dataclasses import dataclass
 
-LIKELY_NAMES = re.compile(r"direct|raven", re.IGNORECASE)
+LIKELY_NAMES = re.compile(r"direct|raven", re.IGNORECASE)  # e.g. DIRECT-xx-..., Raven-CB3
 
 
 @dataclass
@@ -82,10 +83,47 @@ def list_networks(rescan: bool = True) -> list[Network]:
     return parse_wifi_list(out.stdout)
 
 
-def connect(ssid: str) -> None:
+def parse_devices(output: str) -> list[tuple[str, str]]:
+    """(device, state) for each Wi-Fi device in ``nmcli -t -f DEVICE,TYPE,STATE dev``."""
+    devices = []
+    for line in output.splitlines():
+        cols = split_terse(line)
+        if len(cols) >= 3 and cols[1] == "wifi":
+            devices.append((cols[0], cols[2]))
+    return devices
+
+
+def wifi_devices() -> list[tuple[str, str]]:
+    out = subprocess.run(["nmcli", "-t", "-f", "DEVICE,TYPE,STATE", "dev"], capture_output=True, text=True, timeout=15)
+    return parse_devices(out.stdout)
+
+
+def match_ssid(wanted: str, networks: list[Network]) -> tuple[Network | None, list[str]]:
+    """Find ``wanted`` among visible networks, forgiving case and a partial
+    name. Returns (match, suggestions); match is None unless it is unambiguous."""
+    for n in networks:
+        if n.ssid == wanted:
+            return n, []
+    low = wanted.strip().lower()
+    same_case = [n for n in networks if n.ssid.strip().lower() == low]
+    if len(same_case) == 1:
+        return same_case[0], []
+    partial = [n for n in networks if low and low in n.ssid.lower()]
+    if len(partial) == 1:
+        return partial[0], []
+    names = [n.ssid for n in networks]
+    close = difflib.get_close_matches(wanted, names, n=3, cutoff=0.5)
+    suggestions = list(dict.fromkeys([n.ssid for n in partial] + close))
+    return None, suggestions
+
+
+def connect(ssid: str, hidden: bool = False) -> None:
     """Join ``ssid``. nmcli prompts for the password on the terminal if needed,
     so it never appears in the process list or shell history."""
-    out = subprocess.run(["nmcli", "--ask", "dev", "wifi", "connect", ssid], timeout=120)
+    cmd = ["nmcli", "--ask", "dev", "wifi", "connect", ssid]
+    if hidden:
+        cmd += ["hidden", "yes"]
+    out = subprocess.run(cmd, timeout=120)
     if out.returncode != 0:
         raise RuntimeError(f"could not join {ssid!r}")
 

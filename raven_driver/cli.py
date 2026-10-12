@@ -266,12 +266,33 @@ def _report_gateways(args) -> int:
     return 0 if found else 2
 
 
+def _print_networks(networks, file=None) -> None:
+    for n in networks:
+        mark = "*" if n.likely_scanner else " "
+        used = "  (connected)" if n.in_use else ""
+        print(f" {mark} {n.ssid:<32} signal {n.signal:>3}  {n.security or 'open'}{used}", file=file)
+
+
 def cmd_direct(args) -> int:
     if args.probe_only:
         return _report_gateways(args)
     if not wifidirect.have_nmcli():
         print("nmcli (NetworkManager) is not installed. Join the scanner's Wi-Fi network")
         print("from your desktop's Wi-Fi menu, then run: raven-scan direct --probe-only")
+        return 1
+    try:
+        devices = wifidirect.wifi_devices()
+    except (OSError, subprocess.SubprocessError):
+        devices = None
+    if devices == []:
+        print("This computer has no Wi-Fi adapter that NetworkManager can use, so it")
+        print("cannot see the scanner's network. Desktop PCs often have no Wi-Fi.")
+        print("Add a USB Wi-Fi adapter, or run this driver on a laptop.")
+        print("Check with: nmcli device")
+        return 1
+    if devices and all(state == "unavailable" for _, state in devices):
+        print("Wi-Fi is switched off on this computer. Turn it on with:")
+        print("  nmcli radio wifi on")
         return 1
     try:
         networks = wifidirect.list_networks()
@@ -282,20 +303,29 @@ def cmd_direct(args) -> int:
         if not networks:
             print("No Wi-Fi networks found. Is this computer's Wi-Fi on?")
             return 1
-        print("Wi-Fi networks in range (likely scanner networks first):\n")
-        for n in networks:
-            mark = "*" if n.likely_scanner else " "
-            used = "  (connected)" if n.in_use else ""
-            print(f" {mark} {n.ssid:<32} signal {n.signal:>3}  {n.security or 'open'}{used}")
+        _print_networks(networks)
         print("\nJoin the scanner's network with:\n  raven-scan direct --ssid 'NAME'")
         return 0
-    if args.ssid not in {n.ssid for n in networks}:
-        _err(f"{args.ssid!r} is not in range. Is Wi-Fi Direct turned on at the scanner?")
-        return 1
-    print(f"Joining {args.ssid}. This computer leaves its current Wi-Fi network,")
+    ssid = args.ssid
+    if not args.hidden:
+        match, suggestions = wifidirect.match_ssid(args.ssid, networks)
+        if match is None:
+            _err(f"no network named {args.ssid!r} is visible from this computer.")
+            if suggestions:
+                print("Did you mean: " + ", ".join(repr(x) for x in suggestions), file=sys.stderr)
+            if networks:
+                print("\nNetworks this computer can see:", file=sys.stderr)
+                _print_networks(networks, file=sys.stderr)
+            else:
+                print("This computer sees no Wi-Fi networks at all.", file=sys.stderr)
+            print("\nCheck that the scanner's Wi-Fi Direct is on and the scanner is close by.", file=sys.stderr)
+            print("If its network is hidden, retry with --hidden.", file=sys.stderr)
+            return 1
+        ssid = match.ssid
+    print(f"Joining {ssid}. This computer leaves its current Wi-Fi network,")
     print("so it has no internet until you switch back.")
     try:
-        wifidirect.connect(args.ssid)
+        wifidirect.connect(ssid, hidden=args.hidden)
     except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
         _err(str(exc))
         return 1
@@ -358,6 +388,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     w = sub.add_parser("direct", help="connect to the scanner over Wi-Fi Direct")
     w.add_argument("--ssid", help="the scanner's Wi-Fi Direct network name")
+    w.add_argument("--hidden", action="store_true", help="the network is hidden; join it without seeing it")
     w.add_argument("--probe-only", action="store_true", help="already joined; just find the scanner")
     w.add_argument("--timeout", type=float, default=4.0)
     w.set_defaults(func=cmd_direct)
