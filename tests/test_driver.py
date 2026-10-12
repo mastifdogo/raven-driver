@@ -362,6 +362,17 @@ class ExploreTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertIn("/api/v2/status", out.getvalue())
 
+    def test_cli_explore_without_web_port(self):
+        from contextlib import redirect_stderr
+        from io import StringIO
+        from unittest import mock
+
+        err = StringIO()
+        with mock.patch("raven_driver.cli.port_open", return_value=False), redirect_stderr(err):
+            rc = main(["explore", "10.10.10.1"])
+        self.assertEqual(rc, 1)
+        self.assertIn("no web port open", err.getvalue())
+
 
 class LinkTests(unittest.TestCase):
     clashes: list = []
@@ -394,6 +405,44 @@ class LinkTests(unittest.TestCase):
         self.assertEqual(link.candidates(), ["192.168.1.1"])
         link = LinkInfo(device="wlp9s0", address="192.168.49.7/24")
         self.assertEqual(link.candidates(), ["192.168.49.1"])
+
+    def test_candidates_drop_bogus_router_addresses(self):
+        from raven_driver.wifidirect import LinkInfo
+
+        # What Marcus's scanner reported: router 0.0.0.0 on 10.10.10.0/24.
+        link = LinkInfo(device="wlp9s0", address="10.10.10.100/24", gateway="0.0.0.0",
+                        route_gateways=["0.0.0.0"], dhcp_server="10.10.10.1")
+        self.assertEqual(link.candidates(), ["10.10.10.1"])
+        link = LinkInfo(device="wlp9s0", address="10.10.10.100/24", gateway="192.168.1.1")
+        self.assertEqual(link.candidates(), ["10.10.10.1"])
+
+    def test_keeps_checking_after_a_device_without_known_protocol(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest import mock
+
+        from raven_driver.wifidirect import LinkInfo
+
+        link = LinkInfo(device="wlp9s0", address="10.10.10.100/24", gateway="10.10.10.254", dhcp_server="10.10.10.1")
+        outcomes = {"10.10.10.254": "private", "10.10.10.1": "found"}
+        buf = StringIO()
+        with mock.patch("raven_driver.wifidirect.wait_for_link", return_value=link), \
+                mock.patch("raven_driver.wifidirect.overlapping_interfaces", return_value=[]), \
+                mock.patch("raven_driver.cli._check_scanner_at", side_effect=lambda a, args: outcomes.get(a, "")), \
+                redirect_stdout(buf):
+            rc = main(["direct", "--probe-only"])
+        self.assertEqual(rc, 0)
+        self.assertIn("Checking for the scanner at 10.10.10.1", buf.getvalue())
+
+    def test_cli_rejects_unspecified_address(self):
+        from contextlib import redirect_stderr
+        from io import StringIO
+
+        err = StringIO()
+        with redirect_stderr(err):
+            rc = main(["explore", "0.0.0.0"])
+        self.assertEqual(rc, 2)
+        self.assertIn("reaches this computer itself", err.getvalue())
 
     def test_candidates_skip_own_address(self):
         from raven_driver.wifidirect import LinkInfo
@@ -471,7 +520,8 @@ class LinkTests(unittest.TestCase):
 
         rc, text = self._probe_only(LinkInfo(device="wlp9s0", address="192.168.1.23/24"), hosts=["192.168.1.77"])
         self.assertEqual(rc, 2)
-        self.assertIn("Searching all of 192.168.1.0/24", text)
+        self.assertIn("Searching the rest of 192.168.1.0/24", text)
+        self.assertIn("most likely 192.168.1.77", text)
         self.assertIn("Checking for the scanner at 192.168.1.77", text)
 
 
@@ -522,6 +572,8 @@ class WifiDirectTests(unittest.TestCase):
 
         link = LinkInfo(device="wlp9s0", address="127.0.0.5/32", gateway="127.0.0.1")
         with FakeESCL() as fake, mock.patch("raven_driver.wifidirect.wait_for_link", return_value=link), \
+                mock.patch.object(LinkInfo, "candidates", return_value=["127.0.0.1"]), \
+                mock.patch("raven_driver.wifidirect.overlapping_interfaces", return_value=[]), \
                 mock.patch("raven_driver.cli.probe", side_effect=lambda h, **kw: probe(h, extra=[("http", fake.port)])):
             buf = StringIO()
             with redirect_stdout(buf):

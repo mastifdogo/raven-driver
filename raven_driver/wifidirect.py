@@ -187,7 +187,25 @@ class LinkInfo:
             first = str(next(net.hosts()))
             cands.append(first)
         own = self.address.split("/")[0]
-        return [c for c in dict.fromkeys(cands) if c and c != own]
+        return [c for c in dict.fromkeys(cands) if c and c != own and usable_peer(c, net)]
+
+
+def usable_peer(addr: str, net: ipaddress.IPv4Network | None = None) -> bool:
+    """True for an address another device could really have.
+
+    Wi-Fi Direct DHCP servers sometimes hand out 0.0.0.0 as the router, and
+    connecting to 0.0.0.0 on Linux reaches this computer itself."""
+    try:
+        ip = ipaddress.IPv4Address(addr)
+    except ValueError:
+        return False
+    if ip.is_unspecified or ip.is_loopback or ip.is_multicast or ip == ipaddress.IPv4Address("255.255.255.255"):
+        return False
+    if net is not None and ip not in net:
+        return False
+    if net is not None and ip in (net.network_address, net.broadcast_address) and net.prefixlen < 31:
+        return False
+    return True
 
 
 def parse_device_show(output: str) -> dict[str, str]:

@@ -13,7 +13,7 @@ from . import __version__, explore, mdns, sweep, wifidirect
 from .escl import PAGE_SIZES, ESCLError, ESCLScanner, ScanRequest
 from .http import Endpoint, HTTPFailure
 from .pdf import NotJPEG, jpegs_to_pdf
-from .probe import Detected, http_banner, probe, try_escl, try_twainlocal
+from .probe import COMMON_PORTS, Detected, http_banner, port_open, probe, try_escl, try_twainlocal
 from .twainlocal import TwainLocalError, TwainLocalScanner
 
 EXT_FOR_TYPE = {
@@ -263,10 +263,8 @@ def _check_scanner_at(addr: str, args) -> str:
         print(f"\nScan with:\n  {_prog()} scan {addr} -o scan.pdf")
         return "found"
     if report.open_ports:
-        print(f"  {addr} answers on ports {', '.join(map(str, report.open_ports))} but speaks")
-        print("  neither eSCL nor TWAIN Local, so it uses Raven's own protocol.")
-        print("  Map it with this read-only command and share the summary:")
-        print(f"    {_prog()} explore {addr}")
+        print(f"  {addr} answers on ports {', '.join(map(str, report.open_ports))}, but not with")
+        print("  eSCL or TWAIN Local.")
         return "private"
     print(f"  Nothing answered at {addr}.")
     return ""
@@ -301,22 +299,32 @@ def _report_gateways(args) -> int:
         print("Reconnect it afterwards with: nmcli device connect " + clashes[0][0])
         return 1
     candidates = link.candidates()
+    answered: list[str] = []
     for addr in candidates:
         print(f"\nChecking for the scanner at {addr}...")
         outcome = _check_scanner_at(addr, args)
+        if outcome == "found":
+            return 0
         if outcome:
-            return 0 if outcome == "found" else 2
+            answered.append(addr)
     net = link.network
     if net is not None and net.prefixlen >= 24:
-        print(f"\nNot at the usual addresses. Searching all of {net}...")
-        hosts = sweep.sweep([net])
-        for h in hosts:
-            if h.address in candidates:
+        print(f"\nSearching the rest of {net}...")
+        own = link.address.split("/")[0]
+        for h in sweep.sweep([net], ports=COMMON_PORTS):
+            if h.address in candidates or h.address == own:
                 continue
             print(f"\nChecking for the scanner at {h.address}...")
             outcome = _check_scanner_at(h.address, args)
+            if outcome == "found":
+                return 0
             if outcome:
-                return 0 if outcome == "found" else 2
+                answered.append(h.address)
+    if answered:
+        print(f"\nThe scanner is most likely {answered[0]}. It speaks Raven's own protocol.")
+        print("Map it with this read-only command and share the summary:")
+        print(f"  {_prog()} explore {answered[0]}")
+        return 2
     print("\nNo device on the scanner's network answered. Share the output of:")
     print(f"  nmcli -f GENERAL.CONNECTION,IP4,DHCP4 device show {link.device}")
     return 2
@@ -390,8 +398,17 @@ def cmd_direct(args) -> int:
 
 def cmd_explore(args) -> int:
     out_dir = Path(args.output or f"raven-explore-{args.host}")
-    scheme = "https" if args.tls else "http"
-    port = args.port or (443 if args.tls else 80)
+    if args.port:
+        scheme, port = ("https" if args.tls else "http"), args.port
+    else:
+        web = [("http", 80), ("http", 8080), ("https", 443), ("https", 8443), ("http", 631),
+               ("http", 8000), ("http", 5000), ("http", 8888)]
+        open_web = [(sc, pt) for sc, pt in web if port_open(args.host, pt, 2.0)]
+        if not open_web:
+            _err(f"{args.host} has no web port open, so there is no web interface to read.")
+            _err(f"See which ports it has with: {_prog()} probe {args.host}")
+            return 1
+        scheme, port = open_web[0]
     print(f"Reading the scanner's web interface at {scheme}://{args.host}:{port} (read-only)...", file=sys.stderr)
     result = explore.explore(args.host, port=port, scheme=scheme, out_dir=out_dir, max_requests=args.max_requests)
     if not result.hits and result.errors:
@@ -480,6 +497,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    host = getattr(args, "host", None)
+    if host in ("0.0.0.0", "255.255.255.255"):
+        _err(f"{host} is not a device address; on Linux it reaches this computer itself.")
+        return 2
     try:
         return args.func(args)
     except KeyboardInterrupt:

@@ -15,7 +15,7 @@ from .twainlocal import TwainLocalError, TwainLocalScanner
 # goes into the report so the protocol can be reverse engineered later.
 COMMON_PORTS = (21, 22, 23, 80, 443, 515, 631, 5000, 5357, 6000, 8000, 8008, 8080, 8443, 8888, 9100, 9400, 9500, 34034)
 
-ESCL_CANDIDATES = (("http", 80), ("http", 8080), ("https", 443), ("https", 8443))
+ESCL_CANDIDATES = (("http", 80), ("http", 8080), ("https", 443), ("https", 8443), ("http", 631), ("https", 631))
 TWAIN_CANDIDATES = (("http", 80), ("https", 443), ("http", 34034), ("https", 34034), ("http", 8080))
 
 
