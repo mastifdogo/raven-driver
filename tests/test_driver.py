@@ -15,7 +15,7 @@ from raven_driver.pdf import jpeg_info, jpegs_to_pdf
 from raven_driver.probe import probe
 from raven_driver.twainlocal import TwainLocalScanner, build_task, parse_multipart
 
-from tests.fakes import CAPS_XML, TINY_JPEG, FakeESCL, FakeTwainLocal
+from tests.fakes import CAPS_XML, TINY_JPEG, FakeESCL, FakePrivateUI, FakeTwainLocal
 
 
 class MDNSTests(unittest.TestCase):
@@ -300,6 +300,67 @@ class DirectCommandTests(unittest.TestCase):
         rc, _, connect = self._run(["direct", "--ssid", "Raven-CB3", "--hidden"], [("wlan0", "connected")])
         self.assertEqual(rc, 0)
         connect.assert_called_once_with("Raven-CB3", hidden=True)
+
+
+class ExploreTests(unittest.TestCase):
+    def test_follows_links_and_scripts_read_only(self):
+        from raven_driver import explore
+
+        with FakePrivateUI() as fake, tempfile.TemporaryDirectory() as tmp:
+            result = explore.explore("127.0.0.1", port=fake.port, out_dir=Path(tmp))
+            urls = {h.url: h for h in result.hits}
+            self.assertIn("/js/app.js", urls)
+            self.assertIn("/api/v2/status", urls)
+            self.assertNotIn("/api/v2/scan/start", fake.gets)
+            self.assertNotIn("/cgi-bin/reboot.cgi", fake.gets)
+            self.assertNotIn("/admin?action=factoryReset", fake.gets)
+            self.assertIn("/cgi-bin/reboot.cgi", result.skipped_unsafe)
+            self.assertIn("resolution", urls["/api/v2/status"].keywords)
+            self.assertIn("/cgi-bin/save", result.skipped_unsafe)
+            self.assertEqual(fake.posts, [])
+            self.assertIn("RavenHTTP/1.2", result.server_headers)
+            saved = json.loads((Path(tmp) / "summary.json").read_text())
+            self.assertEqual(len(saved["hits"]), len(result.hits))
+            for h in result.hits:
+                self.assertTrue((Path(tmp) / h.saved_as).exists())
+            text = explore.summarize(result)
+            self.assertIn("200 /api/v2/status", text)
+
+    def test_ssh_banner(self):
+        import socket
+        import threading
+
+        from raven_driver.explore import ssh_banner
+
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+
+        def serve():
+            conn, _ = srv.accept()
+            conn.sendall(b"SSH-2.0-dropbear_2019.78\r\n")
+            conn.close()
+
+        threading.Thread(target=serve, daemon=True).start()
+        self.assertEqual(ssh_banner("127.0.0.1", srv.getsockname()[1]), "SSH-2.0-dropbear_2019.78")
+        srv.close()
+
+    def test_extract_links_stays_on_host(self):
+        from raven_driver.explore import extract_links
+
+        body = '<a href="http://evil.example/x">x</a><script src="app.js"></script> "/api/a?b=1" mailto:x'
+        self.assertEqual(extract_links("http://10.0.0.1:80/dir/", body), ["/dir/app.js", "/api/a?b=1"])
+
+    def test_cli_explore_prints_summary(self):
+        from contextlib import redirect_stderr, redirect_stdout
+        from io import StringIO
+
+        with FakePrivateUI() as fake, tempfile.TemporaryDirectory() as tmp:
+            out = StringIO()
+            with redirect_stdout(out), redirect_stderr(StringIO()):
+                rc = main(["explore", "127.0.0.1", "--port", str(fake.port), "-o", tmp])
+            self.assertEqual(rc, 0)
+            self.assertIn("/api/v2/status", out.getvalue())
 
 
 class WifiDirectTests(unittest.TestCase):

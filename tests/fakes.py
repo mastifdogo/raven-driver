@@ -202,3 +202,39 @@ class FakeTwainLocal(_Server):
         self.capturing = False
         self.revision = 0
         self.task = None
+
+
+class _PrivateUIHandler(_Quiet):
+    """A scanner with its own web app and JSON API, like many vendor devices."""
+
+    PAGES = {
+        "/": (b'<html><title>Raven</title><script src="/js/app.js"></script>'
+              b'<a href="/settings.html">Settings</a><a href="/cgi-bin/reboot.cgi">Reboot</a>'
+              b'<a href="/admin?action=factoryReset">Reset</a></html>', "text/html"),
+        "/js/app.js": (b'fetch("/api/v2/status");\nconst START = "/api/v2/scan/start";\n'
+                       b"post('/api/v2/scan/start', {dpi: 300});", "application/javascript"),
+        "/settings.html": (b"<html>Duplex: <form action='/cgi-bin/save'></form></html>", "text/html"),
+        "/api/v2/status": (b'{"state":"idle","resolution":[200,300,600],"adf":"loaded"}', "application/json"),
+    }
+
+    def do_GET(self):
+        self.server.owner.gets.append(self.path)
+        page = self.PAGES.get(self.path)
+        if page:
+            return self.send(200, page[0], page[1], headers={"Server": "RavenHTTP/1.2"})
+        if self.path == "/api/v2/scan/start":
+            return self.send(405, b"use POST")
+        self.send(404)
+
+    def do_POST(self):
+        self.server.owner.posts.append(self.path)
+        self.send(500)
+
+
+class FakePrivateUI(_Server):
+    handler = _PrivateUIHandler
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.gets: list[str] = []
+        self.posts: list[str] = []

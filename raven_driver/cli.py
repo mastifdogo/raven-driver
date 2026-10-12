@@ -9,7 +9,7 @@ from pathlib import Path
 
 import ipaddress
 
-from . import __version__, mdns, sweep, wifidirect
+from . import __version__, explore, mdns, sweep, wifidirect
 from .escl import PAGE_SIZES, ESCLError, ESCLScanner, ScanRequest
 from .http import Endpoint, HTTPFailure
 from .pdf import NotJPEG, jpegs_to_pdf
@@ -24,13 +24,20 @@ EXT_FOR_TYPE = {
 }
 
 
+def _prog() -> str:
+    """How the user started us, so suggested commands can be pasted as-is."""
+    if sys.argv and sys.argv[0].endswith("__main__.py"):
+        return "python3 -m raven_driver"
+    return "raven-scan"
+
+
 def _err(msg: str) -> None:
     print(f"raven-scan: {msg}", file=sys.stderr)
 
 
 NOT_REACHABLE = """Nothing answered at {host}. Either that is not the scanner's address,
 or the scanner is off or not on Wi-Fi. To find its real address, run:
-  raven-scan discover"""
+  {prog} discover"""
 
 
 def _identify(host: sweep.Host) -> str:
@@ -76,7 +83,7 @@ def _sweep(args) -> int:
         if h.hint:
             print(f"                 {h.hint}")
     print("\nYour router, printers and computers will also be listed. To check a")
-    print("candidate, run: raven-scan probe <address>")
+    print(f"candidate, run: {_prog()} probe <address>")
     return 0
 
 
@@ -87,7 +94,7 @@ def cmd_discover(args) -> int:
             print("No scanner advertised itself over mDNS.")
         if args.no_sweep:
             print("Check that the scanner's Wi-Fi light is blue and that this computer is on")
-            print("the same network. Then try: raven-scan discover --sweep-only")
+            print(f"the same network. Then try: {_prog()} discover --sweep-only")
             return 1
         return _sweep(args)
     for svc in services:
@@ -117,7 +124,7 @@ def cmd_probe(args) -> int:
         print(report.to_json())
         return 0 if report.detected else 2
     if not report.open_ports and not report.detected:
-        print(NOT_REACHABLE.format(host=args.host))
+        print(NOT_REACHABLE.format(host=args.host, prog=_prog()))
         return 3
     print(f"Host {report.host}")
     print(f"  open TCP ports: {', '.join(map(str, report.open_ports)) or 'none'}")
@@ -127,13 +134,14 @@ def cmd_probe(args) -> int:
         for d in report.detected:
             print(f"  FOUND {d.protocol} at {d.base_url}{d.root}  model={d.model!r}")
         best = report.best()
-        print(f"\nScanning will use {best.protocol}. Try:\n  raven-scan scan {args.host} -o scan.pdf")
+        print(f"\nScanning will use {best.protocol}. Try:\n  {_prog()} scan {args.host} -o scan.pdf")
         if best.protocol == "escl":
             print("\nThis scanner also works with any SANE frontend through sane-airscan:")
-            print(f"  raven-scan sane-config {args.host}")
+            print(f"  {_prog()} sane-config {args.host}")
         return 0
     print("\nNo supported protocol found. The scanner may use Raven's private protocol.")
-    print("Run `raven-scan probe --json` and follow docs/REVERSE_ENGINEERING.md.")
+    print(f"Map it with `{_prog()} explore {args.host}` and share the summary,")
+    print("or follow docs/REVERSE_ENGINEERING.md.")
     return 2
 
 
@@ -162,11 +170,11 @@ def _detect(args, host: str) -> Detected:
         report = probe(host, escl_root=args.escl_root, timeout=args.timeout, extra=_extra(args))
         best = report.best()
         if not best and not report.open_ports:
-            raise SystemExit("raven-scan: " + NOT_REACHABLE.format(host=host))
+            raise SystemExit("raven-scan: " + NOT_REACHABLE.format(host=host, prog=_prog()))
         if not best:
             raise SystemExit(
                 "raven-scan: the scanner does not answer eSCL or TWAIN Local.\n"
-                "Run `raven-scan probe " + host + "` for details."
+                f"Run `{_prog()} probe " + host + "` for details."
             )
         return best
     scheme = "https" if args.tls else "http"
@@ -246,7 +254,7 @@ def _report_gateways(args) -> int:
     gateways = wifidirect.wait_for_gateway()
     if not gateways:
         print("Joined, but got no network address from the scanner. Wait a few")
-        print("seconds and run: raven-scan direct --probe-only")
+        print(f"seconds and run: {_prog()} direct --probe-only")
         return 1
     found = 0
     for gw in gateways:
@@ -256,11 +264,12 @@ def _report_gateways(args) -> int:
         if best:
             found += 1
             print(f"  FOUND {best.protocol} scanner {best.model!r} at {gw}")
-            print(f"\nScan with:\n  raven-scan scan {gw} -o scan.pdf")
+            print(f"\nScan with:\n  {_prog()} scan {gw} -o scan.pdf")
         elif report.open_ports:
             print(f"  {gw} answers on ports {', '.join(map(str, report.open_ports))} but speaks")
-            print("  neither eSCL nor TWAIN Local. Send the output of:")
-            print(f"    raven-scan probe --json {gw}")
+            print("  neither eSCL nor TWAIN Local, so it uses Raven's own protocol.")
+            print("  Map it with this read-only command and share the summary:")
+            print(f"    {_prog()} explore {gw}")
         else:
             print(f"  Nothing answered at {gw}. You may be on your home network, not the scanner's.")
     return 0 if found else 2
@@ -278,7 +287,7 @@ def cmd_direct(args) -> int:
         return _report_gateways(args)
     if not wifidirect.have_nmcli():
         print("nmcli (NetworkManager) is not installed. Join the scanner's Wi-Fi network")
-        print("from your desktop's Wi-Fi menu, then run: raven-scan direct --probe-only")
+        print(f"from your desktop's Wi-Fi menu, then run: {_prog()} direct --probe-only")
         return 1
     try:
         devices = wifidirect.wifi_devices()
@@ -304,7 +313,7 @@ def cmd_direct(args) -> int:
             print("No Wi-Fi networks found. Is this computer's Wi-Fi on?")
             return 1
         _print_networks(networks)
-        print("\nJoin the scanner's network with:\n  raven-scan direct --ssid 'NAME'")
+        print(f"\nJoin the scanner's network with:\n  {_prog()} direct --ssid 'NAME'")
         return 0
     ssid = args.ssid
     if not args.hidden:
@@ -332,12 +341,27 @@ def cmd_direct(args) -> int:
     return _report_gateways(args)
 
 
+def cmd_explore(args) -> int:
+    out_dir = Path(args.output or f"raven-explore-{args.host}")
+    scheme = "https" if args.tls else "http"
+    port = args.port or (443 if args.tls else 80)
+    print(f"Reading the scanner's web interface at {scheme}://{args.host}:{port} (read-only)...", file=sys.stderr)
+    result = explore.explore(args.host, port=port, scheme=scheme, out_dir=out_dir, max_requests=args.max_requests)
+    if not result.hits and result.errors:
+        _err(f"could not read anything from {args.host}: {result.errors[0]}")
+        return 1
+    print(explore.summarize(result))
+    print(f"\nEverything it fetched is saved in {out_dir}/", file=sys.stderr)
+    print("Paste the summary above to get scanning support written for this protocol.", file=sys.stderr)
+    return 0
+
+
 def cmd_sane_config(args) -> int:
     report = probe(args.host, escl_root=args.escl_root, timeout=args.timeout, extra=_extra(args))
     escl = [d for d in report.detected if d.protocol == "escl"]
     if not escl:
         _err("no eSCL endpoint found, so sane-airscan cannot drive this scanner.")
-        _err("Use `raven-scan scan` instead.")
+        _err(f"Use `{_prog()} scan` instead.")
         return 2
     d = escl[0]
     name = d.model or "Raven Compact"
@@ -385,6 +409,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--page-size", choices=sorted(PAGE_SIZES), default="letter")
     s.add_argument("--insecure", action="store_true", help="accept the scanner's self-signed TLS certificate")
     s.set_defaults(func=cmd_scan)
+
+    e = sub.add_parser("explore", help="map the scanner's private web interface (read-only)")
+    e.add_argument("host", help="scanner IP address, e.g. 192.168.1.1 on Wi-Fi Direct")
+    e.add_argument("--port", type=int, help="web port (default 80)")
+    e.add_argument("--tls", action="store_true", help="use HTTPS")
+    e.add_argument("-o", "--output", help="folder for fetched files (default raven-explore-HOST)")
+    e.add_argument("--max-requests", type=int, default=80)
+    e.set_defaults(func=cmd_explore)
 
     w = sub.add_parser("direct", help="connect to the scanner over Wi-Fi Direct")
     w.add_argument("--ssid", help="the scanner's Wi-Fi Direct network name")

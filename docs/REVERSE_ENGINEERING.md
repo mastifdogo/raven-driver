@@ -6,6 +6,20 @@ supported protocol, that private protocol is the only way in. Adding support
 needs a recording of Raven Desktop talking to the scanner. You can make that
 recording without any special hardware.
 
+## 0. Map the scanner's web interface
+
+If the scanner answers on port 80, start here. This is read-only: it only
+reads pages, and it skips any link that looks like it would change the
+scanner, such as reboot or reset.
+
+```sh
+raven-scan explore 192.168.1.1     # or: python3 -m raven_driver explore 192.168.1.1
+```
+
+It prints a short summary and saves every page and script it read to a
+`raven-explore-<address>` folder. Often the scanner's own web app names the
+API it uses to scan, and the summary is enough to add support.
+
 ## 1. Save the probe report
 
 ```sh

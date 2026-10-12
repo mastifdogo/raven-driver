@@ -127,8 +127,9 @@ If the scanner speaks only **TWAIN Local**, SANE has no backend for it. Use
 * **`discover` finds nothing.** Multicast is often blocked by guest networks
   and some mesh routers, and the sweep only covers your own /24 network. Pass
   another one with `--subnet 10.0.5.0/24`, or use the router's device list.
-* **`probe` finds no protocol.** The scanner may use Raven's private protocol.
-  Save the output of `raven-scan probe --json <ip>` and follow
+* **`probe` finds no protocol.** The scanner uses Raven's private protocol.
+  Run `raven-scan explore <ip>`, which reads the scanner's web interface
+  without changing anything, and share its summary. See
   [docs/REVERSE_ENGINEERING.md](docs/REVERSE_ENGINEERING.md).
 * **"conflict (paper jam or empty feeder?)".** Reload the paper and retry.
 * **USB.** This driver covers Wi-Fi only. USB scanning is not supported.
