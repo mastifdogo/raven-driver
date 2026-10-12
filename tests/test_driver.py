@@ -367,23 +367,95 @@ class ExploreTests(unittest.TestCase):
         from contextlib import redirect_stderr, redirect_stdout
         from io import StringIO
 
-        with FakePrivateUI() as fake, tempfile.TemporaryDirectory() as tmp:
+        from unittest import mock
+
+        with FakePrivateUI() as fake, tempfile.TemporaryDirectory() as tmp, \
+                mock.patch("raven_driver.probe.scan_ports", return_value=[]):
             out = StringIO()
             with redirect_stdout(out), redirect_stderr(StringIO()):
                 rc = main(["explore", "127.0.0.1", "--port", str(fake.port), "-o", tmp])
             self.assertEqual(rc, 0)
             self.assertIn("/api/v2/status", out.getvalue())
 
-    def test_cli_explore_without_web_port(self):
+    def test_cli_explore_without_open_ports(self):
         from contextlib import redirect_stderr
         from io import StringIO
         from unittest import mock
 
         err = StringIO()
-        with mock.patch("raven_driver.cli.port_open", return_value=False), redirect_stderr(err):
+        with mock.patch("raven_driver.probe.scan_ports", return_value=[]), redirect_stderr(err):
             rc = main(["explore", "10.10.10.1"])
         self.assertEqual(rc, 1)
-        self.assertIn("no web port open", err.getvalue())
+        self.assertIn("no open ports found", err.getvalue())
+
+
+def _one_shot_server(greeting: bytes, reply_to_request: bytes = b""):
+    """A TCP server that sends ``greeting`` on connect, or ``reply_to_request``
+    after the client sends something."""
+    import socket
+    import threading
+
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+
+    def serve():
+        conn, _ = srv.accept()
+        with conn:
+            if greeting:
+                conn.sendall(greeting)
+            if reply_to_request:
+                conn.recv(1024)
+                conn.sendall(reply_to_request)
+            conn.settimeout(2)
+            try:
+                conn.recv(1024)
+            except OSError:
+                pass
+
+    threading.Thread(target=serve, daemon=True).start()
+    return srv
+
+
+class GreetingTests(unittest.TestCase):
+    def test_strip_telnet(self):
+        from raven_driver.explore import strip_telnet
+
+        data = b"\xff\xfd\x18\xff\xfb\x01\xff\xfa\x18\x01\xff\xf0Raven login: "
+        self.assertEqual(strip_telnet(data), b"Raven login: ")
+
+    def test_telnet_greeting(self):
+        from raven_driver.explore import port_greeting
+
+        srv = _one_shot_server(b"\xff\xfd\x01\xff\xfb\x01\r\nBusyBox v1.12 (2014)\r\nWiFiScan login: ")
+        g = port_greeting("127.0.0.1", srv.getsockname()[1], timeout=1)
+        srv.close()
+        self.assertEqual(g.kind, "telnet")
+        self.assertIn("WiFiScan login:", g.text)
+
+    def test_silent_port_that_answers_http(self):
+        from raven_driver.explore import port_greeting
+
+        srv = _one_shot_server(b"", b"HTTP/1.0 200 OK\r\nServer: x\r\n\r\nhi")
+        g = port_greeting("127.0.0.1", srv.getsockname()[1], timeout=1)
+        srv.close()
+        self.assertEqual((g.kind, g.replied_to_http), ("http", True))
+
+    def test_binary_greeting_shows_hex(self):
+        from raven_driver.explore import port_greeting, summarize_greetings
+
+        srv = _one_shot_server(bytes([0x1B, 0x00, 0x02, 0x80, 0xFE, 0x10, 0x00, 0x00]))
+        g = port_greeting("127.0.0.1", srv.getsockname()[1], timeout=1)
+        srv.close()
+        self.assertEqual(g.kind, "binary")
+        self.assertIn("hex: 1b 00 02 80 fe 10 00 00", summarize_greetings([g]))
+
+    def test_401_records_password_prompt(self):
+        from raven_driver.explore import Exploration, Hit, summarize
+
+        r = Exploration(host="10.10.10.254", hits=[Hit("/Control/index.htm", 401, "text/html", 351,
+                                                       auth='Basic realm="Wireless Scanner"')])
+        self.assertIn('password prompt: Basic realm="Wireless Scanner"', summarize(r))
 
 
 class LinkTests(unittest.TestCase):

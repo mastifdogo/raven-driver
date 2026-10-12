@@ -13,7 +13,10 @@ from .twainlocal import TwainLocalError, TwainLocalScanner
 
 # Ports worth knocking on. Anything open here that is not eSCL or TWAIN Local
 # goes into the report so the protocol can be reverse engineered later.
-COMMON_PORTS = (21, 22, 23, 80, 443, 515, 631, 5000, 5357, 6000, 8000, 8008, 8080, 8443, 8888, 9100, 9400, 9500, 34034)
+COMMON_PORTS = (
+    21, 22, 23, 80, 443, 515, 554, 631, 1900, 3000, 4000, 5000, 5001, 5357, 5555, 6000, 7000, 7777, 8000, 8001,
+    8008, 8010, 8080, 8081, 8443, 8888, 9000, 9001, 9090, 9100, 9400, 9500, 9999, 10000, 34034, 49152, 54921, 60000,
+)
 
 ESCL_CANDIDATES = (("http", 80), ("http", 8080), ("https", 443), ("https", 8443), ("http", 631), ("https", 631))
 TWAIN_CANDIDATES = (("http", 80), ("https", 443), ("http", 34034), ("https", 34034), ("http", 8080))
@@ -57,7 +60,7 @@ def port_open(host: str, port: int, timeout: float = 1.0) -> bool:
 
 
 def scan_ports(host: str, ports=COMMON_PORTS, timeout: float = 1.0) -> list[int]:
-    with ThreadPoolExecutor(max_workers=16) as pool:
+    with ThreadPoolExecutor(max_workers=256 if len(ports) > 100 else 32) as pool:
         results = pool.map(lambda p: (p, port_open(host, p, timeout)), ports)
     return sorted(p for p, ok in results if ok)
 

@@ -97,6 +97,7 @@ class Hit:
     found_via: str = ""
     keywords: list[str] = field(default_factory=list)
     preview: str = ""  # whole body, for short text pages
+    auth: str = ""  # WWW-Authenticate challenge on a 401, e.g. Basic realm="..."
 
 
 @dataclass
@@ -184,7 +185,8 @@ def explore(host: str, port: int = 80, scheme: str = "http", out_dir: Path | Non
         if resp.status == 404:
             continue
         body = resp.body[:MAX_BODY]
-        hit = Hit(url=path, status=resp.status, content_type=ctype, size=len(resp.body), found_via=via)
+        hit = Hit(url=path, status=resp.status, content_type=ctype, size=len(resp.body), found_via=via,
+                  auth=resp.header("www-authenticate", "") or "")
         is_text = any(t in ctype for t in TEXT_TYPES) or (not ctype and body[:1] in (b"{", b"<", b"["))
         if is_text:
             text = body.decode("utf-8", "replace")
@@ -219,7 +221,9 @@ def summarize(result: Exploration, limit: int = 40) -> str:
     for h in ranked[:limit]:
         kw = f"  [{', '.join(h.keywords)}]" if h.keywords else ""
         lines.append(f"  {h.status} {h.url}  {h.content_type or '?'} {h.size}B{kw}")
-        if h.preview:
+        if h.auth:
+            lines.append(f"      password prompt: {h.auth}")
+        elif h.preview:
             lines.append(f"      | {h.preview[:400]}")
     if result.skipped_unsafe:
         lines.append("  not fetched because they may change the scanner:")
@@ -233,4 +237,104 @@ def summarize(result: Exploration, limit: int = 40) -> str:
         lines.append("  paths mentioned in the scanner's code but not fetched:")
         for p in extra[:limit]:
             lines.append(f"    {p}")
+    return "\n".join(lines)
+
+
+@dataclass
+class PortGreeting:
+    port: int
+    kind: str  # "http", "telnet", "silent", "binary", "text", "closed"
+    text: str = ""
+    hex: str = ""
+    replied_to_http: bool = False
+
+
+def strip_telnet(data: bytes) -> bytes:
+    """Remove telnet IAC negotiation sequences (FF xx yy / FF FA ... FF F0)."""
+    out = bytearray()
+    i = 0
+    while i < len(data):
+        b = data[i]
+        if b == 0xFF and i + 1 < len(data):
+            cmd = data[i + 1]
+            if cmd == 0xFF:
+                out.append(0xFF)
+                i += 2
+            elif cmd == 0xFA:
+                end = data.find(b"\xff\xf0", i + 2)
+                i = len(data) if end < 0 else end + 2
+            elif cmd in (0xFB, 0xFC, 0xFD, 0xFE):
+                i += 3
+            else:
+                i += 2
+            continue
+        out.append(b)
+        i += 1
+    return bytes(out)
+
+
+def _printable(data: bytes) -> str:
+    text = data.decode("latin-1")
+    return "".join(c if c.isprintable() or c in "\n\t" else "." for c in text).strip()
+
+
+def _recv_for(sock: socket.socket, seconds: float) -> bytes:
+    sock.settimeout(seconds)
+    chunks = []
+    try:
+        while True:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            if sum(map(len, chunks)) > 4096:
+                break
+            sock.settimeout(0.5)
+    except OSError:
+        pass
+    return b"".join(chunks)
+
+
+def port_greeting(host: str, port: int, timeout: float = 3.0) -> PortGreeting:
+    """Read what a TCP port says on connect. If it says nothing, send one
+    harmless HTTP GET to see whether it is a web server. Never logs in."""
+    try:
+        sock = socket.create_connection((host, port), timeout=timeout)
+    except OSError:
+        return PortGreeting(port, "closed")
+    with sock:
+        data = _recv_for(sock, timeout)
+        replied = False
+        if not data:
+            try:
+                sock.sendall(f"GET / HTTP/1.0\r\nHost: {host}\r\n\r\n".encode())
+                data = _recv_for(sock, timeout)
+                replied = bool(data)
+            except OSError:
+                data = b""
+    if not data:
+        return PortGreeting(port, "silent")
+    if data.startswith(b"HTTP/"):
+        kind = "http"
+        clean = data
+    elif data[:1] == b"\xff":
+        kind = "telnet"
+        clean = strip_telnet(data)
+    else:
+        clean = data
+        printable = sum(32 <= b < 127 or b in (9, 10, 13) for b in data[:256])
+        kind = "text" if printable >= 0.9 * min(len(data), 256) else "binary"
+    return PortGreeting(port, kind, text=_printable(clean)[:600], hex=data[:64].hex(" "), replied_to_http=replied)
+
+
+def summarize_greetings(greetings: list[PortGreeting]) -> str:
+    lines = ["Other ports"]
+    for g in greetings:
+        how = " (after an HTTP request)" if g.replied_to_http else ""
+        lines.append(f"  {g.port}: {g.kind}{how}")
+        if g.text:
+            for row in g.text.splitlines()[:12]:
+                lines.append(f"      | {row}")
+        if g.kind == "binary" and g.hex:
+            lines.append(f"      hex: {g.hex}")
     return "\n".join(lines)

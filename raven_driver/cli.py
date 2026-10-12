@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 import ipaddress
@@ -396,25 +398,54 @@ def cmd_direct(args) -> int:
     return _report_gateways(args)
 
 
+WEB_PORTS = {80: "http", 8080: "http", 443: "https", 8443: "https", 631: "http", 8000: "http",
+             5000: "http", 8888: "http"}
+
+
 def cmd_explore(args) -> int:
+    from .probe import scan_ports
+
     out_dir = Path(args.output or f"raven-explore-{args.host}")
-    if args.port:
-        scheme, port = ("https" if args.tls else "http"), args.port
+    if args.all_ports:
+        print(f"Checking all 65535 TCP ports on {args.host}; this takes a minute or two...", file=sys.stderr)
+        open_ports = scan_ports(args.host, ports=range(1, 65536), timeout=0.6)
     else:
-        web = [("http", 80), ("http", 8080), ("https", 443), ("https", 8443), ("http", 631),
-               ("http", 8000), ("http", 5000), ("http", 8888)]
-        open_web = [(sc, pt) for sc, pt in web if port_open(args.host, pt, 2.0)]
-        if not open_web:
-            _err(f"{args.host} has no web port open, so there is no web interface to read.")
-            _err(f"See which ports it has with: {_prog()} probe {args.host}")
-            return 1
-        scheme, port = open_web[0]
-    print(f"Reading the scanner's web interface at {scheme}://{args.host}:{port} (read-only)...", file=sys.stderr)
-    result = explore.explore(args.host, port=port, scheme=scheme, out_dir=out_dir, max_requests=args.max_requests)
-    if not result.hits and result.errors:
-        _err(f"could not read anything from {args.host}: {result.errors[0]}")
+        open_ports = scan_ports(args.host)
+    if args.port and args.port not in open_ports:
+        open_ports.append(args.port)
+    if not open_ports:
+        _err(f"no open ports found on {args.host}. Is this computer still on the scanner's Wi-Fi?")
         return 1
-    print(explore.summarize(result))
+
+    # Read every port's greeting first: this also tells us which ones speak HTTP.
+    greetings = [explore.port_greeting(args.host, p) for p in sorted(open_ports)]
+    http_ports = []
+    for g in greetings:
+        if args.port == g.port:
+            http_ports.append(("https" if args.tls else "http", g.port))
+        elif g.kind == "http":
+            http_ports.append(("http", g.port))
+        elif g.kind in ("silent", "binary") and WEB_PORTS.get(g.port) == "https":
+            http_ports.append(("https", g.port))
+
+    summaries = []
+    for scheme, port in http_ports:
+        print(f"Reading the web interface at {scheme}://{args.host}:{port} (read-only)...", file=sys.stderr)
+        sub = out_dir if port == 80 and len(http_ports) == 1 else out_dir / f"port-{port}"
+        result = explore.explore(args.host, port=port, scheme=scheme, out_dir=sub, max_requests=args.max_requests)
+        result.open_ports = sorted(open_ports)
+        text = explore.summarize(result)
+        if port != 80:
+            text = text.replace(f"Scanner {args.host}", f"Scanner {args.host} port {port}", 1)
+        summaries.append(text)
+    others = [g for g in greetings if g.port not in {p for _, p in http_ports}]
+    if not summaries:
+        summaries.append(f"Scanner {args.host}\n  open ports: {', '.join(map(str, sorted(open_ports)))}")
+    if others:
+        summaries.append(explore.summarize_greetings(others))
+    print("\n\n".join(summaries))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "ports.json").write_text(json.dumps([asdict(g) for g in greetings], indent=2))
     print(f"\nEverything it fetched is saved in {out_dir}/", file=sys.stderr)
     print("Paste the summary above to get scanning support written for this protocol.", file=sys.stderr)
     return 0
@@ -480,6 +511,7 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--tls", action="store_true", help="use HTTPS")
     e.add_argument("-o", "--output", help="folder for fetched files (default raven-explore-HOST)")
     e.add_argument("--max-requests", type=int, default=80)
+    e.add_argument("--all-ports", action="store_true", help="check all 65535 TCP ports, not just common ones")
     e.set_defaults(func=cmd_explore)
 
     w = sub.add_parser("direct", help="connect to the scanner over Wi-Fi Direct")
