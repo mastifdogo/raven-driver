@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "raven-driver"
+version = "0.1.0"
+description = "Linux driver for the Raven Compact Wi-Fi document scanner (eSCL and TWAIN Local)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = []
+classifiers = [
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Topic :: Multimedia :: Graphics :: Capture :: Scanners",
+]
+
+[project.scripts]
+raven-scan = "raven_driver.cli:main"
+
+[tool.setuptools]
+packages = ["raven_driver"]
