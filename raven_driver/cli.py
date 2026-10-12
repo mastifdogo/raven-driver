@@ -6,11 +6,13 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import __version__, mdns
+import ipaddress
+
+from . import __version__, mdns, sweep
 from .escl import PAGE_SIZES, ESCLError, ESCLScanner, ScanRequest
 from .http import Endpoint, HTTPFailure
 from .pdf import NotJPEG, jpegs_to_pdf
-from .probe import Detected, probe
+from .probe import Detected, http_banner, probe, try_escl, try_twainlocal
 from .twainlocal import TwainLocalError, TwainLocalScanner
 
 EXT_FOR_TYPE = {
@@ -25,12 +27,68 @@ def _err(msg: str) -> None:
     print(f"raven-scan: {msg}", file=sys.stderr)
 
 
-def cmd_discover(args) -> int:
-    services = mdns.browse(timeout=args.timeout)
-    if not services:
-        print("No network scanners answered. Check that the scanner's Wi-Fi light is solid blue")
-        print("and that this computer is on the same network. Then try: raven-scan probe <ip>")
+NOT_REACHABLE = """Nothing answered at {host}. Either that is not the scanner's address,
+or the scanner is off or not on Wi-Fi. To find its real address, run:
+  raven-scan discover"""
+
+
+def _identify(host: sweep.Host) -> str:
+    """Best-effort one-line description of what a swept host is."""
+    for scheme, port in (("http", 80), ("https", 443), ("http", 8080), ("https", 8443)):
+        if port not in host.open_ports:
+            continue
+        try:
+            return "eSCL scanner: " + (try_escl(host.address, scheme, port, "eSCL", True, 2.0).model or "?")
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            return "TWAIN Local scanner: " + (try_twainlocal(host.address, scheme, port, True, 2.0).model or "?")
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            return http_banner(host.address, scheme, port, True, 2.0)
+        except Exception:  # noqa: BLE001
+            pass
+    return ""
+
+
+def _sweep(args) -> int:
+    if args.subnet:
+        nets = [ipaddress.IPv4Network(args.subnet, strict=False)]
+    else:
+        nets = sweep.local_networks()
+    if not nets:
+        print("Could not work out this computer's network. Pass one, e.g. --subnet 192.168.0.0/24")
         return 1
+    print(f"Sweeping {', '.join(map(str, nets))} for devices with web or scan ports open...")
+    hosts = sweep.sweep(nets)
+    if not hosts:
+        print("No devices answered. Check that this computer is on the same Wi-Fi as the scanner.")
+        return 1
+    for h in hosts:
+        h.hint = _identify(h)
+    hosts.sort(key=lambda h: ("raven" not in h.hint.lower(), "scanner" not in h.hint.lower()))
+    print()
+    for h in hosts:
+        mac = f"  mac {h.mac}" if h.mac else ""
+        print(f"{h.address:<16} ports {','.join(map(str, h.open_ports)):<20}{mac}")
+        if h.hint:
+            print(f"                 {h.hint}")
+    print("\nYour router, printers and computers will also be listed. To check a")
+    print("candidate, run: raven-scan probe <address>")
+    return 0
+
+
+def cmd_discover(args) -> int:
+    services = [] if args.sweep_only else mdns.browse(timeout=args.timeout)
+    if not services:
+        if not args.sweep_only:
+            print("No scanner advertised itself over mDNS.")
+        if args.no_sweep:
+            print("Check that the scanner's Wi-Fi light is blue and that this computer is on")
+            print("the same network. Then try: raven-scan discover --sweep-only")
+            return 1
+        return _sweep(args)
     for svc in services:
         proto = {
             "_uscan._tcp.local": "eSCL",
@@ -57,6 +115,9 @@ def cmd_probe(args) -> int:
     if args.json:
         print(report.to_json())
         return 0 if report.detected else 2
+    if not report.open_ports and not report.detected:
+        print(NOT_REACHABLE.format(host=args.host))
+        return 3
     print(f"Host {report.host}")
     print(f"  open TCP ports: {', '.join(map(str, report.open_ports)) or 'none'}")
     for key, banner in report.banners.items():
@@ -93,6 +154,8 @@ def _detect(args, host: str) -> Detected:
     if args.protocol == "auto":
         report = probe(host, escl_root=args.escl_root, timeout=args.timeout, extra=_extra(args))
         best = report.best()
+        if not best and not report.open_ports:
+            raise SystemExit("raven-scan: " + NOT_REACHABLE.format(host=host))
         if not best:
             raise SystemExit(
                 "raven-scan: the scanner does not answer eSCL or TWAIN Local.\n"
@@ -204,6 +267,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     d = sub.add_parser("discover", help="find scanners on the local network")
     d.add_argument("--timeout", type=float, default=4.0)
+    d.add_argument("--subnet", help="network to sweep, e.g. 192.168.0.0/24 (default: this computer's)")
+    d.add_argument("--no-sweep", action="store_true", help="only use mDNS, never sweep the subnet")
+    d.add_argument("--sweep-only", action="store_true", help="skip mDNS and sweep the subnet")
     d.set_defaults(func=cmd_discover)
 
     pr = sub.add_parser("probe", help="detect which protocol a scanner speaks")

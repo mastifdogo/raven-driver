@@ -47,10 +47,12 @@ of connected devices.
 ## Use
 
 ```sh
-# 1. Find it
+# 1. Find it. If the scanner does not advertise itself, this sweeps your
+#    network and lists every device with web or scan ports open.
 raven-scan discover
 
-# 2. See which protocol it speaks
+# 2. See which protocol it speaks. Use the address step 1 found;
+#    192.168.1.40 is only an example.
 raven-scan probe 192.168.1.40
 
 # 3. Scan. A .pdf output combines all pages into one file.
@@ -93,8 +95,12 @@ If the scanner speaks only **TWAIN Local**, SANE has no backend for it. Use
 
 ## Troubleshooting
 
+* **`probe` says "Nothing answered".** The address is wrong, or the scanner
+  is off or not on Wi-Fi. Run `raven-scan discover`, or look up the scanner
+  in your router's list of connected devices.
 * **`discover` finds nothing.** Multicast is often blocked by guest networks
-  and some mesh routers. Use the IP address directly with `probe`.
+  and some mesh routers, and the sweep only covers your own /24 network. Pass
+  another one with `--subnet 10.0.5.0/24`, or use the router's device list.
 * **`probe` finds no protocol.** The scanner may use Raven's private protocol.
   Save the output of `raven-scan probe --json <ip>` and follow
   [docs/REVERSE_ENGINEERING.md](docs/REVERSE_ENGINEERING.md).

@@ -169,5 +169,53 @@ class ProbeAndCLITests(unittest.TestCase):
         self.assertIn("0.1.0", out.stdout)
 
 
+class UnreachableAndSweepTests(unittest.TestCase):
+    def _no_ports(self):
+        from unittest import mock
+
+        return mock.patch("raven_driver.probe.scan_ports", return_value=[])
+
+    def test_probe_says_wrong_address_when_nothing_answers(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+
+        buf = StringIO()
+        with self._no_ports(), redirect_stdout(buf):
+            rc = main(["probe", "192.0.2.77"])
+        self.assertEqual(rc, 3)
+        self.assertIn("Nothing answered at 192.0.2.77", buf.getvalue())
+        self.assertNotIn("private protocol", buf.getvalue())
+
+    def test_scan_says_wrong_address_when_nothing_answers(self):
+        with self._no_ports(), self.assertRaises(SystemExit) as ctx:
+            main(["scan", "192.0.2.77", "-o", "/dev/null"])
+        self.assertIn("Nothing answered at 192.0.2.77", str(ctx.exception.code))
+
+    def test_sweep_finds_and_identifies_scanner(self):
+        import ipaddress
+
+        from raven_driver import sweep
+
+        with FakeESCL() as fake:
+            hosts = sweep.sweep([ipaddress.IPv4Network("127.0.0.1/32")], ports=(fake.port,))
+            self.assertEqual([(h.address, h.open_ports) for h in hosts], [("127.0.0.1", [fake.port])])
+
+    def test_identify_reports_escl_model(self):
+        from unittest import mock
+
+        from raven_driver import sweep
+        from raven_driver.cli import _identify
+
+        with mock.patch("raven_driver.cli.try_escl") as try_escl:
+            try_escl.return_value.model = "Raven Compact"
+            self.assertEqual(_identify(sweep.Host("127.0.0.1", [80])), "eSCL scanner: Raven Compact")
+
+    def test_local_networks_are_at_most_slash_24(self):
+        from raven_driver import sweep
+
+        for net in sweep.local_networks():
+            self.assertGreaterEqual(net.prefixlen, 24)
+
+
 if __name__ == "__main__":
     unittest.main()
