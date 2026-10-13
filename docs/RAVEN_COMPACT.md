@@ -43,20 +43,44 @@ the official software scanning (see REVERSE_ENGINEERING.md). The commands
 inside that framing are probably Avision's USB command set, so the recording
 mainly has to reveal the wrapper.
 
-## Try USB with SANE
+## USB with SANE
 
-The box reports the scanner inside it as Avision USB device `0638:3200`. If
-the Compact's USB port shows the same device, SANE's avision backend may
-drive it once it is told the ID. This is untested, and SANE does not list the
-model. Over a USB cable:
+With its Wi-Fi switched off, the Compact appears on USB as:
 
-```sh
-lsusb | grep -i 0638                     # expect: ID 0638:3200
-sudo apt install sane-utils              # Debian/Ubuntu; provides scanimage
-echo "usb 0x0638 0x3200" | sudo tee -a /etc/sane.d/avision.conf
-scanimage -L                             # should list an avision: device
-scanimage --format=png > test.png        # one test scan
+```
+ID 0638:3200 Avision, Inc. Compact_WiFi
+Manufacturer: Raven   Product: Compact_WiFi   SerialNumber: B103843122290367
 ```
 
-If `scanimage -L` lists the scanner but scanning fails, run it again with
-`SANE_DEBUG_AVISION=7 scanimage -L 2> avision-debug.txt` and keep the file.
+Three things stop stock SANE from using it:
+
+1. **Not on the model list.** SANE's avision backend only attaches models in
+   its built-in list and rejects others as "not yet in whitelist". Adding a
+   `usb 0x0638 0x3200` line to `avision.conf` is not enough.
+2. **The printer driver claims it.** The kernel's `usblp` driver binds to the
+   Compact, and SANE does not detach kernel drivers.
+3. **No user access.** Only scanners that libsane knows get user permissions.
+
+`contrib/build-sane-avision.sh` fixes all three. It rebuilds only the avision
+backend from the SANE source matching your installed version, with one model
+entry added for `0638:3200`. It writes a `raven-scanimage` command that loads
+only that backend, so other broken backends cannot interfere. With `--udev` it
+installs `contrib/60-raven-compact.rules`, which releases the scanner from
+`usblp` and grants access. With `--install` it also replaces the system avision
+backend, keeping a backup, so desktop scanning apps see the scanner.
+
+```sh
+contrib/build-sane-avision.sh --udev
+# unplug and replug the scanner, Wi-Fi off
+raven-scanimage -L
+raven-scanimage --format=png > test.png
+```
+
+The model entry uses the settings most similar Avision duplex sheet-fed
+scanners use (`AV_INT_BUTTON | AV_CANCEL_BUTTON`). Others can be tried with,
+for example, `RAVEN_AVISION_FLAGS="AV_INT_BUTTON" contrib/build-sane-avision.sh`.
+This is untested on the Compact. If scanning fails, capture:
+
+```sh
+SANE_DEBUG_AVISION=7 SANE_DEBUG_SANEI_USB=5 raven-scanimage -L 2> avision-debug.txt
+```

@@ -1,0 +1,11 @@
+# Raven Compact (Avision 0638:3200) over USB.
+#
+# 1. Let the logged-in user and the "scanner" group open the device, and mark
+#    it as a SANE device, as libsane's own rules do for known scanners.
+# 2. The kernel's usblp printer driver claims the Compact's interface, which
+#    stops SANE from opening it. Release it whenever usblp binds to it.
+#
+# Install: sudo cp 60-raven-compact.rules /etc/udev/rules.d/
+#          sudo udevadm control --reload && sudo udevadm trigger
+ACTION=="add|change", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="0638", ATTR{idProduct}=="3200", MODE="0664", GROUP="scanner", ENV{libsane_matched}="yes", TAG+="uaccess"
+ACTION=="bind", SUBSYSTEM=="usb", DRIVER=="usblp", ATTRS{idVendor}=="0638", ATTRS{idProduct}=="3200", RUN+="/bin/sh -c 'echo -n %k > /sys/bus/usb/drivers/usblp/unbind'"
