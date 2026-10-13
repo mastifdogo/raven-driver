@@ -216,3 +216,13 @@ fixed profile can only remove the repeatable part. `make-flatfield.py --check`
 now also reports the top, middle and bottom thirds of a scan, to show whether
 the shading changes down the sheet, as it would if the paper lifts off the
 sensor glass while feeding.
+
+Three uncorrected blank scans made one after another then agreed to within
+about half a level in every eighth of the page and in every third down it,
+so the shading is repeatable and the paper does not lift. The calibration
+scan that failed was the first after the scanner had been idle, and its
+colour balance differed (red 239, green 226, blue 247 mid-page, against 239,
+240, 243 in the later scans): the scanner was still warming up.
+`calibrate-flatfield.sh` now makes a warm-up scan it throws away, then
+averages two colour scans and uses one gray scan, and `make-flatfield.py`
+averages any number of colour (P6) and gray (P5) scans.

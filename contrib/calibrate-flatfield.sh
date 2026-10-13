@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Make the Raven Compact's flat-field profile from two scans of a blank sheet.
+# Make the Raven Compact's flat-field profile from scans of a blank sheet.
 #
 # The Compact reads darker toward the ends of its sensor (and greener light
 # falls off most, tinting the edges pink). Its firmware offers no calibration
@@ -21,10 +21,15 @@ scan() {  # scan MODE FILE
   RAVEN_FLATFIELD=off "$SCANIMAGE" --mode "$1" --resolution "$RES" --format=pnm > "$2"
 }
 
-echo "Scanning the blank sheet twice, once in colour and once in gray, at $RES dpi."
-scan Color "$WORK/color.pnm"
+echo "Scanning the blank sheet four times at $RES dpi: a warm-up scan that is"
+echo "thrown away (the first scan after the scanner has been idle reads"
+echo "differently), then two in colour and one in gray, which are averaged."
+scan Color "$WORK/warmup.pnm"
+scan Color "$WORK/color1.pnm"
+scan Color "$WORK/color2.pnm"
 scan Gray "$WORK/gray.pnm"
-python3 "$HERE/make-flatfield.py" --resolution "$RES" "$WORK/color.pnm" "$WORK/gray.pnm"
+python3 "$HERE/make-flatfield.py" --resolution "$RES" \
+  "$WORK/color1.pnm" "$WORK/color2.pnm" "$WORK/gray.pnm"
 
 cat <<MSG
 

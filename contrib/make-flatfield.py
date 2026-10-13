@@ -2,11 +2,14 @@
 """Make a flat-field profile for the Raven Compact from blank-sheet scans.
 
 Usage:
-  contrib/make-flatfield.py COLOR.pnm GRAY.pnm [--resolution 150] [-o FILE]
-  contrib/make-flatfield.py --check SCAN.pnm [--resolution 150]
+  contrib/make-flatfield.py SCAN.pnm... [--resolution 150] [-o FILE]
+  contrib/make-flatfield.py --check SCAN.pnm... [--resolution 150]
 
-COLOR.pnm and GRAY.pnm are scans of a plain white sheet, made with the
-correction off (RAVEN_FLATFIELD=off) at the given resolution and full width.
+The scans are of a plain white sheet, made with the correction off
+(RAVEN_FLATFIELD=off) at the given resolution and full width: at least one
+colour scan (P6) and one gray scan (P5). Several of each are averaged. Do not
+use the first scan after the scanner has been idle; it reads differently
+while the scanner warms up.
 The profile goes to ~/.config/raven-driver/flatfield.txt unless -o says
 otherwise; the patched avision backend reads it on every scan.
 
@@ -126,14 +129,21 @@ def main():
                     print(f"    {name:<5} {label:<6} " + " ".join(f"{v:5.1f}" for v in eighths))
         return
 
-    if len(args.scans) != 2:
-        ap.error("give a colour scan and a gray scan of the same blank sheet")
-    width_c, colour = column_profiles(args.scans[0])
-    width_g, gray = column_profiles(args.scans[1])
-    if len(colour) != 3 or len(gray) != 1:
-        sys.exit("the first scan must be colour (P6) and the second gray (P5)")
-    if width_c != width_g:
-        sys.exit("the two scans have different widths; use the same resolution for both")
+    colour_scans, gray_scans, width_c = [], [], None
+    for path in args.scans:
+        width, profs = column_profiles(path)
+        if width_c is not None and width != width_c:
+            sys.exit(f"{path} has a different width; use the same resolution for every scan")
+        width_c = width
+        (colour_scans if len(profs) == 3 else gray_scans).append(profs)
+    if not colour_scans or not gray_scans:
+        ap.error("give at least one colour scan and one gray scan of the blank sheet")
+
+    def mean_of(scans, channel):
+        return [sum(s[channel][x] for s in scans) / len(scans) for x in range(width_c)]
+
+    colour = [mean_of(colour_scans, c) for c in range(3)]
+    gray = [mean_of(gray_scans, 0)]
     profiles = [smooth(p, radius) for p in colour + gray]
 
     gains, warnings = [], []
@@ -146,8 +156,8 @@ def main():
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
     with open(args.output, "w") as f:
         f.write("# raven-driver flat-field profile for the Raven Compact\n")
-        f.write(f"# made {time.strftime('%Y-%m-%d %H:%M')} from {args.scans[0]} and {args.scans[1]}"
-                f" at {args.resolution:g} dpi\n")
+        f.write(f"# made {time.strftime('%Y-%m-%d %H:%M')} from {len(colour_scans)} colour and"
+                f" {len(gray_scans)} gray scans at {args.resolution:g} dpi: {' '.join(args.scans)}\n")
         f.write("# inches_from_left red green blue gray\n")
         for x in range(width_c):
             inch = args.left + (x + 0.5) / args.resolution
