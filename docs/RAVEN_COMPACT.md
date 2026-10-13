@@ -167,3 +167,18 @@ this were lossy WebP, which adds colour at edges itself, so
 it reports red and blue edge offsets relative to green, in fractions of a
 pixel, for each direction. A consistent offset across the feed direction can
 be corrected by shifting those channels.
+
+### Uneven brightness across the page
+
+Paper reads darker toward the edges of the sensor, the right edge most:
+across a 150 dpi gray scan the paper level runs 224, 227, 232, 232, 232, 227,
+222, 205 from left to right. In colour the green channel falls most, which
+tints the edges pink (at 600 dpi the paper's green drops from 253 in the
+middle to 210 at the right edge). Brightness does not vary down the page, so
+it comes from the sensor, not the paper feed.
+
+The backend skips calibration because the Compact's calibration format says
+none is needed. Forcing it with `AV_FORCE_CALIB` does not work: READ
+calibration format (`28:60`) succeeds, but READ calibration data (`28:62`)
+fails with an I/O error a second later, and the scan aborts. Do not add
+`AV_FORCE_CALIB`.
