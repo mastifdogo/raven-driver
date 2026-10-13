@@ -8,11 +8,14 @@
 # tries again: first until the option list opens, then until a test scan
 # finishes. It stops on a command scanning cannot do without.
 #
-# Usage: contrib/find-bad-commands.sh [output-folder]
+# Usage: contrib/find-bad-commands.sh [output-folder] [scanimage options...]
+#   e.g. contrib/find-bad-commands.sh raven-bringup --source "ADF Front"
 # Put a page in the feeder first. Each reboot takes up to a minute.
 
 set -u
 OUT="${1:-raven-bringup}"
+shift $(( $# > 0 ? 1 : 0 ))
+EXTRA=("$@")
 SCANIMAGE="${RAVEN_SCANIMAGE:-$HOME/.local/bin/raven-scanimage}"
 LSUSB="${LSUSB:-lsusb}"
 skip="${RAVEN_SKIP_OPS:-00}"
@@ -103,11 +106,11 @@ stage() {  # stage NAME TIMEOUT ARGS...
   return 1
 }
 
-log "Starting with RAVEN_SKIP_OPS=$skip"
-if stage options 120 -A; then
+log "Starting with RAVEN_SKIP_OPS=$skip${EXTRA[*]:+ and options: ${EXTRA[*]}}"
+if stage options 120 "${EXTRA[@]}" -A; then
   grep -E '^ +-' "$OUT/options.out" | head -40 > "$OUT/options.txt"
   log "Options saved to $OUT/options.txt"
-  if stage scan 300 --format=png; then
+  if stage scan 300 "${EXTRA[@]}" --format=png; then
     mv "$OUT/scan.out" "$OUT/test.png"
     log "Test scan saved to $OUT/test.png ($(stat -c %s "$OUT/test.png") bytes)"
   fi

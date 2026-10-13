@@ -113,6 +113,15 @@ again: first until the option list opens, then until a test scan finishes.
 It stops if the scanner reboots on set window (`24`), start scan (`1b`) or
 read image data (`28:00`), which a scan cannot do without, or if a failure
 comes without a reboot. The final skip list and every round's log are saved.
+Options after the folder name go to every run, e.g.
+`contrib/find-bad-commands.sh raven-bringup --source "ADF Front"`.
+
+On the real scanner it found only `00` and `28:64`. With `RAVEN_SKIP_OPS=00,28:64`
+the option list opens and a scan runs. The first scans came out as bands that
+fade from gray to white with no page content, because the paper never moved.
+The inquiry reports scanner type 0 (flatbed) plus an ADF, so the backend
+offers "Normal" (flatbed glass, which the Compact lacks) and "ADF Front", and
+defaults to "Normal". Scans must use `--source "ADF Front"`.
 
 The model entry uses the settings most similar Avision duplex sheet-fed
 scanners use (`AV_INT_BUTTON | AV_CANCEL_BUTTON`). Others can be tried with,
