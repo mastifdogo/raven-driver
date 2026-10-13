@@ -31,6 +31,7 @@ Switch the scanner's Wi-Fi off and connect it with a USB cable. Then:
 ```sh
 contrib/build-sane-avision.sh --install   # patched SANE avision backend, USB access rule
 contrib/calibrate-flatfield.sh            # once: even out brightness, using a blank sheet
+contrib/calibrate-fringe.sh               # once: remove colour fringes, using a text page
 raven-scanimage --mode Color --resolution 300 --format=png > scan.png
 ```
 
@@ -38,7 +39,7 @@ raven-scanimage --mode Color --resolution 300 --format=png > scan.png
 scanning apps see the scanner; rerun it after a SANE package update. The
 patch adds the Compact to the model list, treats it as sheet-fed, skips the
 two commands its firmware reboots on, uses the gray filter for gray scans,
-and applies the blank-sheet brightness profile. Calibrate with a warm
+and applies the brightness and colour fringe profiles. Calibrate with a warm
 scanner: the calibration script makes a throw-away warm-up scan first.
 
 ## Install

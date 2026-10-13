@@ -232,3 +232,28 @@ of the same sheet now reads within about 2 levels in every eighth across the
 page (green 240.4, 240.3, 240.6, 240.3, 240.3, 240.5, 240.6, 239.0) and in
 every third down it, against a spread of up to 38 levels before. Only the
 outermost columns at the right edge stay a little dark.
+
+### Colour fringe correction
+
+Colour scans of black-and-white pages have faint coloured fringes on edges
+across the feed direction: the Compact reads red, green and blue a fraction
+of a line apart while the paper moves (about +0.2 and -0.15 px at 600 dpi in
+an early measurement). `contrib/measure-color-fringe.py` now finds, by least
+squares, the sub-pixel shift that best lines red and blue up with green, and
+`--save --resolution N` stores it per resolution in
+`~/.config/raven-driver/fringe.txt`. `contrib/calibrate-fringe.sh` scans a text
+page at 150, 300 and 600 dpi with the correction off and saves all three.
+
+The backend applies it in `sane_read` for 8-bit colour scans, before the
+flat-field gains. With no lookahead in the data stream, all channels are
+shifted by the same extra amount so each output sample only blends the
+current and previous raw line; the whole image moves by under a line. The
+nearest resolution's entry is used when there is no exact one.
+`RAVEN_FRINGE=off` disables it; `RAVEN_FRINGE=/path` picks another profile.
+
+Tested without the scanner: a C harness (weights, reads split mid-line, the
+first line, padding bytes, nearest-resolution choice, gray, 16-bit, off and
+missing profile), and end to end on synthetic scans. On 1.5 px lines offset
+by -0.25 (red) and +0.35 (blue), the line centres after correction were
+within 0.04 px of green and the share of visibly coloured pixels halved; on
+4 px bars the residual was 0.00 and +0.06 px.

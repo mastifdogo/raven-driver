@@ -78,6 +78,7 @@ fi
 git -C "$SRC" checkout --quiet -- backend/avision.c
 say "Adding Raven Compact (0638:3200) support to the avision backend"
 RAVEN_FLAGS="$FLAGS" RAVEN_FF_SRC="$HERE/sane-patches/raven-flatfield.c" \
+  RAVEN_FR_SRC="$HERE/sane-patches/raven-fringe.c" \
   python3 - "$SRC/backend/avision.c" <<'PY'
 import os, sys
 path = sys.argv[1]
@@ -151,19 +152,27 @@ insert("  if (!dev)\n    return SANE_STATUS_INVAL;\n", """
 # d) Flat-field correction: the Compact reads darker toward the sensor ends
 #    and offers no calibration data, so scale each sample by a per-position
 #    gain from a blank-sheet profile (see contrib/calibrate-flatfield.sh).
+# e) Colour fringe correction: red and blue are read a fraction of a line
+#    away from green; shift them back (see contrib/calibrate-fringe.sh).
 fragment = open(os.environ["RAVEN_FF_SRC"], encoding="latin-1").read()
+fragment += "\n" + open(os.environ["RAVEN_FR_SRC"], encoding="latin-1").read()
 insert("SANE_Status\nsane_start (SANE_Handle handle)\n", fragment + "\n", after=False)
-insert('  DBG (1, "sane_start:\\n");\n', "  raven_ff_reset ();  /* raven-driver */\n")
-insert("  *len = (SANE_Int) nread;\n", """  /* raven-driver: flat-field correction for the Raven Compact */
+insert('  DBG (1, "sane_start:\\n");\n', "  raven_ff_reset ();  /* raven-driver */\n  raven_fr_reset ();\n")
+insert("  *len = (SANE_Int) nread;\n", """  /* raven-driver: fringe and flat-field correction for the Raven Compact */
   if (raven_quirks && !raven_ff_ready) {
     SANE_Parameters rp;
     raven_ff_ready = 1;
-    if (sane_get_parameters (s, &rp) == SANE_STATUS_GOOD)
+    raven_fr_ready = 1;
+    if (sane_get_parameters (s, &rp) == SANE_STATUS_GOOD) {
+      raven_fr_build (&rp, (double) s->val[OPT_RESOLUTION].w);
       raven_ff_build (&rp, (double) s->val[OPT_RESOLUTION].w,
                       SANE_UNFIX (s->val[OPT_TL_X].w) / 25.4);
+    }
   }
-  if (raven_quirks)
+  if (raven_quirks) {
+    raven_fr_apply (buf, (long) nread);   /* fringe first, on raw lines */
     raven_ff_apply (buf, (long) nread);
+  }
 """, after=False)
 
 open(path, "w", encoding="latin-1").write(src)
