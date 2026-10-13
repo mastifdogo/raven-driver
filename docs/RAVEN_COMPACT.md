@@ -56,7 +56,7 @@ Three things stop stock SANE from using it:
 
 1. **Not on the model list.** SANE's avision backend only attaches models in
    its built-in list and rejects others as "not yet in whitelist". Adding a
-   `usb 0x0638 0x3200` line to `avision.conf` is not enough.
+   `usb 0x0638 0x3200` line to `avision.conf` does not help.
 2. **The printer driver claims it.** The kernel's `usblp` driver binds to the
    Compact, and SANE does not detach kernel drivers.
 3. **No user access.** Only scanners that libsane knows get user permissions.
@@ -75,6 +75,12 @@ contrib/build-sane-avision.sh --udev
 raven-scanimage -L
 raven-scanimage --format=png > test.png
 ```
+
+On the real scanner this works: `raven-scanimage -L` reports
+`device 'avision:libusb:001:007' is a Raven Compact flatbed scanner`, and the
+scanner's INQUIRY identifies it as `Raven` / `Compact_WiFi`. Do not also list
+`usb 0x0638 0x3200` in `/etc/sane.d/avision.conf`: that makes the backend probe
+the scanner a second way and log "not yet in whitelist" warnings.
 
 The model entry uses the settings most similar Avision duplex sheet-fed
 scanners use (`AV_INT_BUTTON | AV_CANCEL_BUTTON`). Others can be tried with,

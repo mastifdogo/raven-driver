@@ -128,10 +128,14 @@ say "Built $OUT/libsane-avision.so.1"
 # 7. A config directory that loads only avision, and a wrapper that uses it.
 mkdir -p "$OUT/etc"
 echo "avision" > "$OUT/etc/dll.conf"
+# The model entry makes the backend find the Compact by itself. A
+# "usb 0x0638 0x3200" line in avision.conf would make it probe the scanner a
+# second way that ignores the entry and logs "not yet in whitelist", so drop it.
 if [[ -f /etc/sane.d/avision.conf ]]; then
-  cp /etc/sane.d/avision.conf "$OUT/etc/avision.conf"
+  grep -viE '^[[:space:]]*usb[[:space:]]+0x0638[[:space:]]+0x3200[[:space:]]*$' \
+    /etc/sane.d/avision.conf > "$OUT/etc/avision.conf" || true
 else
-  echo "usb 0x0638 0x3200" > "$OUT/etc/avision.conf"
+  : > "$OUT/etc/avision.conf"
 fi
 mkdir -p "$HOME/.local/bin"
 cat > "$HOME/.local/bin/raven-scanimage" <<WRAP
