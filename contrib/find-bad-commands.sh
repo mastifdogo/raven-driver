@@ -18,7 +18,7 @@ shift $(( $# > 0 ? 1 : 0 ))
 EXTRA=("$@")
 SCANIMAGE="${RAVEN_SCANIMAGE:-$HOME/.local/bin/raven-scanimage}"
 LSUSB="${LSUSB:-lsusb}"
-skip="${RAVEN_SKIP_OPS:-00}"
+skip="${RAVEN_SKIP_OPS:-00,28:64}"
 max_rounds="${MAX_ROUNDS:-15}"
 reboot_wait="${REBOOT_WAIT:-60}"
 # Set window (24), start scan (1b) and read image data (28:00): skipping

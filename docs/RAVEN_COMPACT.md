@@ -121,7 +121,21 @@ the option list opens and a scan runs. The first scans came out as bands that
 fade from gray to white with no page content, because the paper never moved.
 The inquiry reports scanner type 0 (flatbed) plus an ADF, so the backend
 offers "Normal" (flatbed glass, which the Compact lacks) and "ADF Front", and
-defaults to "Normal". Scans must use `--source "ADF Front"`.
+defaults to "Normal". "ADF Front" was not offered either: the backend takes
+ADF presence from the "detect accessories" reply, and the skipped command
+returns zeros.
+
+The build script therefore patches three things for USB ID `0638:3200` only:
+
+* the model list entry, so the backend accepts the Compact;
+* the scanner type, forced to sheet-fed, so the only and default source is
+  "ADF Front";
+* the command filter, which now skips `00` and `28:64` by default whenever a
+  Compact is open. `RAVEN_SKIP_OPS` still overrides the list, and an empty
+  value skips nothing.
+
+Each run of the script patches a fresh copy of `avision.c` from git, so
+re-running after an update never stacks patches.
 
 The model entry uses the settings most similar Avision duplex sheet-fed
 scanners use (`AV_INT_BUTTON | AV_CANCEL_BUTTON`). Others can be tried with,

@@ -73,14 +73,24 @@ if [[ ! -d "$SRC/.git" ]]; then
   git clone --quiet --depth 1 --branch "$SANE_VERSION" https://gitlab.com/sane-project/backends.git "$SRC"
 fi
 
-# 4. Add the Raven Compact to the avision model list (idempotent).
-say "Adding Raven Compact (0638:3200) to the avision model list"
+# 4. Patch avision.c. Start from the pristine file each time, so a newer
+#    version of this script never stacks on an older patch.
+git -C "$SRC" checkout --quiet -- backend/avision.c
+say "Adding Raven Compact (0638:3200) support to the avision backend"
 RAVEN_FLAGS="$FLAGS" python3 - "$SRC/backend/avision.c" <<'PY'
-import os, re, sys
+import os, sys
 path = sys.argv[1]
 src = open(path, encoding="latin-1").read()
 flags = os.environ["RAVEN_FLAGS"]
-entry = f'''    /* Raven Compact (Avision OEM), added by raven-driver */
+
+def insert(anchor, text, after=True):
+    global src
+    if src.count(anchor) != 1:
+        sys.exit("avision.c layout not recognised near: " + anchor.strip()[:60])
+    src = src.replace(anchor, anchor + text if after else text + anchor, 1)
+
+# a) Model list entry: without it the backend rejects the Compact.
+insert("static Avision_HWEntry Avision_Device_List [] =\n  {\n", f'''    /* Raven Compact (Avision OEM), added by raven-driver */
     {{ NULL, NULL,
       0x0638, 0x3200,
       "Raven", "Compact",
@@ -89,48 +99,54 @@ entry = f'''    /* Raven Compact (Avision OEM), added by raven-driver */
     }},
     /* status="untested" */
 
-'''
-marker = "static Avision_HWEntry Avision_Device_List [] =\n  {\n"
-if marker not in src:
-    sys.exit("avision.c layout not recognised; cannot add the Raven Compact entry")
-# Replace any entry from an earlier run, so a new RAVEN_AVISION_FLAGS applies.
-src = re.sub(r"    /\* Raven Compact \(Avision OEM\), added by raven-driver \*/\n.*?/\* status=\"untested\" \*/\n\n",
-             "", src, flags=re.S)
-src = src.replace(marker, marker + entry, 1)
+''')
 
-# Command filter for bringing up the Compact, whose firmware reboots on some
-# commands (TEST UNIT READY among them). Tokens in RAVEN_SKIP_OPS are opcodes
-# ("00") or opcode:datatype for READ/SEND ("28:64"), comma separated. Skipped
-# commands are not sent and report success with zeroed data. RAVEN_TRACE_OPS
-# (or RAVEN_SKIP_OPS) logs one short line per command.
-hook_marker = "/* raven-driver: RAVEN_SKIP_OPS */"
-hook = """  """ + hook_marker + """
+# b) The Compact is sheet-fed but its INQUIRY reports type 0 (flatbed), so
+#    the backend would default to a flatbed source it does not have.
+insert("  dev->inquiry_new_protocol = BIT (result[39],2);\n", """  /* raven-driver: the Raven Compact is sheet-fed but reports a flatbed */
+  if (dev->hw->usb_vendor == 0x0638 && dev->hw->usb_product == 0x3200) {
+    dev->scanner_type = AV_SHEETFEED;
+    dev->sane.type = "sheetfed scanner";
+  }
+
+""", after=False)
+
+# c) Command filter. The Compact's firmware reboots on TEST UNIT READY (00)
+#    and READ detect accessories (28:64), so those are skipped by default for
+#    it. RAVEN_SKIP_OPS overrides the list (empty = skip nothing); tokens are
+#    opcodes ("00") or opcode:datatype ("28:64"). RAVEN_TRACE_OPS, or setting
+#    RAVEN_SKIP_OPS, logs one line per command at SANE_DEBUG_AVISION=1.
+insert("static SANE_Status avision_cmd (Avision_Connection* av_con,\n",
+       "static int raven_quirks = 0; /* raven-driver: set when a Raven Compact is open */\n\n",
+       after=False)
+insert('  DBG (7, "avision_cmd: %s\\n", strcmd);\n', """  /* raven-driver: RAVEN_SKIP_OPS */
   {
-    const char* skip = getenv ("RAVEN_SKIP_OPS");
+    const char* env = getenv ("RAVEN_SKIP_OPS");
+    const char* skip = env ? env : (raven_quirks ? "00,28:64" : NULL);
     const uint8_t* c = (const uint8_t*) cmd;
     char tok[8], tok2[8], list[512];
+    int skipped = 0;
     snprintf (tok, sizeof (tok), ",%02x,", c[0]);
     snprintf (tok2, sizeof (tok2), ",%02x:%02x,", c[0], cmd_size > 2 ? c[2] : 0);
-    if (skip || getenv ("RAVEN_TRACE_OPS"))
-      DBG (1, "raven: %s %02x:%02x %s\\n",
-           (skip && (snprintf (list, sizeof (list), ",%s,", skip),
-                     strstr (list, tok) || strstr (list, tok2))) ? "SKIP" : "send",
-           c[0], cmd_size > 2 ? c[2] : 0, strcmd);
     if (skip) {
       snprintf (list, sizeof (list), ",%s,", skip);
-      if (strstr (list, tok) || strstr (list, tok2)) {
-        if (dst && dst_size && *dst_size)
-          memset (dst, 0, *dst_size);
-        return SANE_STATUS_GOOD;
-      }
+      skipped = strstr (list, tok) || strstr (list, tok2);
+    }
+    if (env || getenv ("RAVEN_TRACE_OPS"))
+      DBG (1, "raven: %s %02x:%02x %s\\n", skipped ? "SKIP" : "send",
+           c[0], cmd_size > 2 ? c[2] : 0, strcmd);
+    if (skipped) {
+      if (dst && dst_size && *dst_size)
+        memset (dst, 0, *dst_size);
+      return SANE_STATUS_GOOD;
     }
   }
-"""
-anchor = '  DBG (7, "avision_cmd: %s\\n", strcmd);\n'
-if hook_marker not in src:
-    if anchor not in src:
-        sys.exit("avision.c layout not recognised; cannot add the command filter")
-    src = src.replace(anchor, anchor + hook, 1)
+""")
+insert("  if (!dev)\n    return SANE_STATUS_INVAL;\n", """
+  /* raven-driver: turn on the Raven Compact command filter */
+  raven_quirks = (dev->hw->usb_vendor == 0x0638 && dev->hw->usb_product == 0x3200);
+""")
+
 open(path, "w", encoding="latin-1").write(src)
 print("entry flags:", flags)
 PY
