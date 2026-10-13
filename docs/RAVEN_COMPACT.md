@@ -206,3 +206,13 @@ channel, reads split mid-line, clipping, offset windows, clamping past the
 profile, line art and disabled cases), and end to end on synthetic blank
 scans shaped like the real falloff, where a 19% green drop at the right edge
 came down to 0.5%.
+
+First calibration on the real scanner: the blank sheet read up to 44% darker
+in green at the right edge. A check scan with the profile applied came out
+uneven the other way: the left was slightly low and the right over-corrected.
+Undoing the gains shows the right half of the second blank scan read 6-7%
+brighter than the first, so the falloff is not the same from scan to scan. A
+fixed profile can only remove the repeatable part. `make-flatfield.py --check`
+now also reports the top, middle and bottom thirds of a scan, to show whether
+the shading changes down the sheet, as it would if the paper lifts off the
+sensor glass while feeding.

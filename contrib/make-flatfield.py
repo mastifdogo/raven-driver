@@ -41,8 +41,10 @@ def read_pnm(path):
     return int(fields[1]), int(fields[2]), 3 if magic == b"P6" else 1, data[pos + 1 :]
 
 
-def column_profiles(path):
-    """Mean level of each column, per channel, over the rows that show paper."""
+def column_profiles(path, bands=1):
+    """Mean level of each column, per channel, over the rows that show paper.
+    With bands > 1, returns one such profile list per horizontal band
+    (top to bottom) instead."""
     width, height, channels, px = read_pnm(path)
     stride = width * channels
     row_means = [sum(px[y * stride : (y + 1) * stride : 7]) / len(px[y * stride : (y + 1) * stride : 7])
@@ -51,15 +53,22 @@ def column_profiles(path):
     typical = ordered[len(ordered) // 2]
     rows = [y for y in range(height) if row_means[y] >= 0.9 * typical]  # skip the strip after the paper ends
     rows = rows[len(rows) // 20 : len(rows) - len(rows) // 20] or rows
-    rows = rows[:: max(1, len(rows) // 400)]
-    sums = [[0] * width for _ in range(channels)]
-    for y in rows:
-        line = px[y * stride : (y + 1) * stride]
-        for c in range(channels):
-            s = sums[c]
-            for x, v in enumerate(line[c::channels]):
-                s[x] += v
-    return width, [[v / len(rows) for v in s] for s in sums]
+
+    def average(band_rows):
+        band_rows = band_rows[:: max(1, len(band_rows) // 400)]
+        sums = [[0] * width for _ in range(channels)]
+        for y in band_rows:
+            line = px[y * stride : (y + 1) * stride]
+            for c in range(channels):
+                s = sums[c]
+                for x, v in enumerate(line[c::channels]):
+                    s[x] += v
+        return [[v / len(band_rows) for v in s] for s in sums]
+
+    if bands == 1:
+        return width, average(rows)
+    size = max(1, len(rows) // bands)
+    return width, [average(rows[i * size : (i + 1) * size] or rows) for i in range(bands)]
 
 
 def smooth(values, radius):
@@ -106,6 +115,15 @@ def main():
             print(f"{path}: {width} columns")
             for name, prof in zip(names, profiles):
                 print(describe(name, smooth(prof, radius)))
+            # Does the shading change from the top of the sheet to the bottom?
+            _, thirds = column_profiles(path, bands=3)
+            print("  by third of the page (eighths across, left to right):")
+            for ci, name in enumerate(names):
+                for label, band in zip(("top", "middle", "bottom"), thirds):
+                    prof = band[ci]
+                    eighths = [sum(prof[i * width // 8 : (i + 1) * width // 8]) / max(1, width // 8)
+                               for i in range(8)]
+                    print(f"    {name:<5} {label:<6} " + " ".join(f"{v:5.1f}" for v in eighths))
         return
 
     if len(args.scans) != 2:
