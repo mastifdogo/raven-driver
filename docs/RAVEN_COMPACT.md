@@ -103,8 +103,16 @@ To get past this, the rebuilt backend has a command filter for bring-up:
 RAVEN_SKIP_OPS=00 SANE_DEBUG_AVISION=1 raven-scanimage -A 2>&1 | grep -E "raven:|scanimage:|^ +-"
 ```
 
-If the scanner reboots again, the last `raven: send` line names the next
-command it cannot take; add it to `RAVEN_SKIP_OPS` and repeat.
+With `00` skipped, the scanner rebooted on the next command, READ "detect
+accessories" (`28:64`).
+
+`contrib/find-bad-commands.sh` automates the search. It runs
+`raven-scanimage`, takes the last command sent before the scanner dropped off
+USB, adds it to the skip list, waits for the scanner to come back, and tries
+again: first until the option list opens, then until a test scan finishes.
+It stops if the scanner reboots on set window (`24`), start scan (`1b`) or
+read image data (`28:00`), which a scan cannot do without, or if a failure
+comes without a reboot. The final skip list and every round's log are saved.
 
 The model entry uses the settings most similar Avision duplex sheet-fed
 scanners use (`AV_INT_BUTTON | AV_CANCEL_BUTTON`). Others can be tried with,
