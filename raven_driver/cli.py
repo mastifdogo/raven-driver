@@ -488,7 +488,9 @@ def cmd_avision_inquiry(args) -> int:
         print("so scanning can be built on SANE's Avision protocol. Share this output.")
     else:
         print("\nNo scanner identity in the reply. The box wraps commands in its own format,")
-        print("so a recording of the official software is needed. Share this output.")
+        print("so a recording of the official software is needed: see the Raven Compact")
+        print("section of docs/REVERSE_ENGINEERING.md. Over a USB cable the scanner may")
+        print("work with SANE today: see docs/RAVEN_COMPACT.md.")
     return 0
 
 

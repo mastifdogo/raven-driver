@@ -15,9 +15,11 @@ protocols a Wi-Fi scanner of its generation is likely to implement:
 The `probe` command tells you which one your unit speaks. If it speaks
 neither, see [docs/REVERSE_ENGINEERING.md](docs/REVERSE_ENGINEERING.md).
 
-> **Status:** both protocol clients are implemented and tested against
-> simulated scanners. They have **not yet been tested on real Raven Compact
-> hardware.** Please report what `raven-scan probe --json <ip>` prints.
+> **Status:** a real Raven Compact speaks neither eSCL nor TWAIN Local. It is
+> an Avision scanner behind an Avision network box that wraps commands in an
+> undocumented format, so **Wi-Fi scanning does not work yet.** See
+> [docs/RAVEN_COMPACT.md](docs/RAVEN_COMPACT.md) for what is known and how to
+> help. The eSCL and TWAIN Local clients remain for other scanners.
 
 ## Install
 
@@ -132,7 +134,9 @@ If the scanner speaks only **TWAIN Local**, SANE has no backend for it. Use
   without changing anything, and share its summary. See
   [docs/REVERSE_ENGINEERING.md](docs/REVERSE_ENGINEERING.md).
 * **"conflict (paper jam or empty feeder?)".** Reload the paper and retry.
-* **USB.** This driver covers Wi-Fi only. USB scanning is not supported.
+* **USB.** This driver covers Wi-Fi only. The Raven Compact is an Avision
+  scanner inside, so over USB it may work with SANE's own `avision` backend.
+  See [docs/RAVEN_COMPACT.md](docs/RAVEN_COMPACT.md).
 
 ## Development
 

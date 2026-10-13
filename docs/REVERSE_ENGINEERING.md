@@ -30,6 +30,25 @@ It lists the scanner's open TCP ports and what each HTTP port answers.
 
 ## 2. Record Raven Desktop scanning
 
+### For the Raven Compact over Wi-Fi Direct
+
+The Compact's network box is at `10.10.10.254`, and the scanning traffic is
+on TCP ports 5549 and 5551. On a Windows or macOS computer:
+
+1. Install Raven Desktop and [Wireshark](https://www.wireshark.org/).
+2. Join the scanner's Wi-Fi network, for example `Raven-CBC3`.
+3. In Wireshark, capture on the Wi-Fi interface with the capture filter
+   `host 10.10.10.254`.
+4. In Raven Desktop, connect to the scanner wirelessly. Then scan:
+   * one page, color, 300 dpi, one side,
+   * the same page again in grayscale at 200 dpi.
+5. Stop the capture and save it as a `.pcapng` file.
+
+The capture holds no passwords, because the computer had already joined the
+scanner's network before recording started.
+
+### General steps
+
 Use a Windows or macOS computer with Raven Desktop installed. The scanner
 must already be on Wi-Fi.
 

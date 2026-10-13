@@ -33,16 +33,30 @@ The scanner itself is at `10.10.10.254`.
   does not list product `3200`. It also expects a local USB device, not a
   network one.
 
-## Open question
+## Result: the box wraps commands
 
-Does port 5551 pass the scanner's USB traffic through unchanged? Test it:
+A SCSI INQUIRY sent to port 5551, padded to 10 bytes as SANE's avision
+backend sends it over USB, got no reply at all. Only the `SUCCESS` greeting
+came back. The box does not pass raw scanner commands through; it expects
+its own framing around them. Supporting Wi-Fi therefore needs a recording of
+the official software scanning (see REVERSE_ENGINEERING.md). The commands
+inside that framing are probably Avision's USB command set, so the recording
+mainly has to reveal the wrapper.
+
+## Try USB with SANE
+
+The box reports the scanner inside it as Avision USB device `0638:3200`. If
+the Compact's USB port shows the same device, SANE's avision backend may
+drive it once it is told the ID. This is untested, and SANE does not list the
+model. Over a USB cable:
 
 ```sh
-raven-scan avision-inquiry 10.10.10.254
+lsusb | grep -i 0638                     # expect: ID 0638:3200
+sudo apt install sane-utils              # Debian/Ubuntu; provides scanimage
+echo "usb 0x0638 0x3200" | sudo tee -a /etc/sane.d/avision.conf
+scanimage -L                             # should list an avision: device
+scanimage --format=png > test.png        # one test scan
 ```
 
-This sends one read-only SCSI INQUIRY. If the reply contains the scanner's
-vendor and model text, the Avision protocol can be driven over the network
-directly. If not, the box wraps commands in its own format, and a recording
-of Raven Desktop or Avision software scanning is needed (see
-REVERSE_ENGINEERING.md).
+If `scanimage -L` lists the scanner but scanning fails, run it again with
+`SANE_DEBUG_AVISION=7 scanimage -L 2> avision-debug.txt` and keep the file.
