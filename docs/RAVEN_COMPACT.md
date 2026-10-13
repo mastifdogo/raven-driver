@@ -226,3 +226,9 @@ colour balance differed (red 239, green 226, blue 247 mid-page, against 239,
 `calibrate-flatfield.sh` now makes a warm-up scan it throws away, then
 averages two colour scans and uses one gray scan, and `make-flatfield.py`
 averages any number of colour (P6) and gray (P5) scans.
+
+Profile made from the three warm blank scans plus one gray scan: a check scan
+of the same sheet now reads within about 2 levels in every eighth across the
+page (green 240.4, 240.3, 240.6, 240.3, 240.3, 240.5, 240.6, 239.0) and in
+every third down it, against a spread of up to 38 levels before. Only the
+outermost columns at the right edge stay a little dark.

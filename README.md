@@ -15,11 +15,31 @@ protocols a Wi-Fi scanner of its generation is likely to implement:
 The `probe` command tells you which one your unit speaks. If it speaks
 neither, see [docs/REVERSE_ENGINEERING.md](docs/REVERSE_ENGINEERING.md).
 
-> **Status:** a real Raven Compact speaks neither eSCL nor TWAIN Local. It is
-> an Avision scanner behind an Avision network box that wraps commands in an
-> undocumented format, so **Wi-Fi scanning does not work yet.** See
-> [docs/RAVEN_COMPACT.md](docs/RAVEN_COMPACT.md) for what is known and how to
-> help. The eSCL and TWAIN Local clients remain for other scanners.
+> **Status:** the Raven Compact works on Linux **over USB** through SANE, so
+> any SANE app (NAPS2, Document Scanner, `scanimage`) can scan with it, in
+> colour and gray, with even brightness across the page. See
+> [Raven Compact over USB](#raven-compact-over-usb). **Wi-Fi scanning does not
+> work yet**: the Compact is an Avision scanner behind an Avision network box
+> that wraps commands in an undocumented format. See
+> [docs/RAVEN_COMPACT.md](docs/RAVEN_COMPACT.md). The eSCL and TWAIN Local
+> clients in this package remain for other Wi-Fi scanners.
+
+## Raven Compact over USB
+
+Switch the scanner's Wi-Fi off and connect it with a USB cable. Then:
+
+```sh
+contrib/build-sane-avision.sh --install   # patched SANE avision backend, USB access rule
+contrib/calibrate-flatfield.sh            # once: even out brightness, using a blank sheet
+raven-scanimage --mode Color --resolution 300 --format=png > scan.png
+```
+
+`--install` replaces SANE's avision backend (a backup is kept) so desktop
+scanning apps see the scanner; rerun it after a SANE package update. The
+patch adds the Compact to the model list, treats it as sheet-fed, skips the
+two commands its firmware reboots on, uses the gray filter for gray scans,
+and applies the blank-sheet brightness profile. Calibrate with a warm
+scanner: the calibration script makes a throw-away warm-up scan first.
 
 ## Install
 
