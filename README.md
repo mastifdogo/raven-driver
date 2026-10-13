@@ -136,7 +136,8 @@ If the scanner speaks only **TWAIN Local**, SANE has no backend for it. Use
 * **"conflict (paper jam or empty feeder?)".** Reload the paper and retry.
 * **USB.** The Raven Compact is an Avision scanner inside. Over USB it can
   use SANE's `avision` backend once the Compact is added to its model list;
-  `contrib/build-sane-avision.sh --udev` does that. See
+  `contrib/build-sane-avision.sh --udev` does that, and
+  `contrib/calibrate-flatfield.sh` evens out brightness across the page. See
   [docs/RAVEN_COMPACT.md](docs/RAVEN_COMPACT.md).
 
 ## Development

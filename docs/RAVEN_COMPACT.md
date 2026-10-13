@@ -182,3 +182,27 @@ none is needed. Forcing it with `AV_FORCE_CALIB` does not work: READ
 calibration format (`28:60`) succeeds, but READ calibration data (`28:62`)
 fails with an I/O error a second later, and the scan aborts. Do not add
 `AV_FORCE_CALIB`.
+
+### Flat-field correction
+
+Since the scanner offers no calibration data, the patched backend corrects
+shading itself. `contrib/calibrate-flatfield.sh` scans a plain white sheet in
+colour and in gray with the correction off, and `contrib/make-flatfield.py`
+turns those scans into `~/.config/raven-driver/flatfield.txt`: one line per
+position across the page, in inches, with gains for red, green, blue and gray.
+Gains keep the brightest part of the sheet where it is and lift the rest to
+match, clipped to 0.5-2.0.
+
+While a Compact is open, the backend multiplies each 8-bit sample by its
+column's gain in `sane_read`, so every frontend gets corrected images,
+including NAPS2 once the backend is installed with `--install`. Positions are
+in inches, so one profile serves any resolution and scan window. Line art is
+left alone. `RAVEN_FLATFIELD=off` turns the correction off for a scan, and
+`RAVEN_FLATFIELD=/path` picks another profile; `/etc/sane.d/raven-compact-flatfield.txt`
+is used when the user has none.
+
+Tested without the scanner: the C code against SANE 1.2.1 headers (gains per
+channel, reads split mid-line, clipping, offset windows, clamping past the
+profile, line art and disabled cases), and end to end on synthetic blank
+scans shaped like the real falloff, where a 19% green drop at the right edge
+came down to 0.5%.
