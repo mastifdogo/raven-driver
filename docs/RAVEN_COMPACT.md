@@ -154,3 +154,16 @@ This is untested on the Compact. If scanning fails, capture:
 ```sh
 SANE_DEBUG_AVISION=7 SANE_DEBUG_SANEI_USB=5 raven-scanimage -L 2> avision-debug.txt
 ```
+
+### Gray and colour scans
+
+With `AV_USE_GRAY_FILTER`, gray scans of a full letter page are clean, and
+colour scans reproduce red and blue pen marks. Colour scans of a gray page
+show faint false colour at edges: roughly 0.8% of pixels have saturation over
+40, about three times stronger on edges across the feed direction than along
+it. Quality scan mode is already on by default. The uploads used to judge
+this were lossy WebP, which adds colour at edges itself, so
+`contrib/measure-color-fringe.py color.pnm` measures it on the original file:
+it reports red and blue edge offsets relative to green, in fractions of a
+pixel, for each direction. A consistent offset across the feed direction can
+be corrected by shifting those channels.
