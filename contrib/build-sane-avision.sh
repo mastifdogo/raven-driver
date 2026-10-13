@@ -229,8 +229,10 @@ say "Wrote $HOME/.local/bin/raven-scanimage"
 
 if ((UDEV)); then
   sudo cp "$HERE/60-raven-compact.rules" /etc/udev/rules.d/60-raven-compact.rules
-  sudo udevadm control --reload
-  sudo udevadm trigger --subsystem-match=usb --attr-match=idVendor=0638
+  # A failed reload must not stop the install: the rule still applies after
+  # the next replug or reboot.
+  sudo udevadm control --reload || echo "warning: could not reload udev rules; replug the scanner or reboot" >&2
+  sudo udevadm trigger --subsystem-match=usb --attr-match=idVendor=0638 || true
   say "Installed /etc/udev/rules.d/60-raven-compact.rules; unplug and replug the scanner"
 fi
 

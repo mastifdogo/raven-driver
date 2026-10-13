@@ -29,14 +29,33 @@ neither, see [docs/REVERSE_ENGINEERING.md](docs/REVERSE_ENGINEERING.md).
 Switch the scanner's Wi-Fi off and connect it with a USB cable. Then:
 
 ```sh
-contrib/build-sane-avision.sh --install   # patched SANE avision backend, USB access rule
-contrib/calibrate-flatfield.sh            # once: even out brightness, using a blank sheet
-contrib/calibrate-fringe.sh               # once: remove colour fringes, using a text page
+./install.sh      # patched SANE avision backend, USB access rule, raven-scanimage,
+                  # then offers to calibrate brightness and colour fringes
+```
+
+Scan from NAPS2, Document Scanner, or the command line:
+
+```sh
 raven-scanimage --mode Color --resolution 300 --format=png > scan.png
 ```
 
+To remove everything, restoring SANE's original avision backend:
+
+```sh
+./uninstall.sh                  # also deletes the calibration profiles
+./uninstall.sh --keep-profiles  # keeps them, e.g. before reinstalling
+```
+
+The steps `install.sh` runs can also be run on their own:
+
+```sh
+contrib/build-sane-avision.sh --install   # patched backend and USB access rule
+contrib/calibrate-flatfield.sh            # even out brightness, using a blank sheet
+contrib/calibrate-fringe.sh               # remove colour fringes, using a text page
+```
+
 `--install` replaces SANE's avision backend (a backup is kept) so desktop
-scanning apps see the scanner; rerun it after a SANE package update. The
+scanning apps see the scanner; rerun `./install.sh --no-calibrate` after a SANE package update. The
 patch adds the Compact to the model list, treats it as sheet-fed, skips the
 two commands its firmware reboots on, uses the gray filter for gray scans,
 and applies the brightness and colour fringe profiles. Calibrate with a warm
