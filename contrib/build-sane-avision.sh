@@ -20,12 +20,12 @@
 #
 # Environment:
 #   RAVEN_AVISION_FLAGS  model flags for the entry
-#                        (default "AV_INT_BUTTON | AV_CANCEL_BUTTON")
+#                        (default "AV_INT_BUTTON | AV_CANCEL_BUTTON | AV_USE_GRAY_FILTER")
 #   SANE_VERSION         source tag to build (default: your scanimage version)
 
 set -euo pipefail
 
-FLAGS="${RAVEN_AVISION_FLAGS:-AV_INT_BUTTON | AV_CANCEL_BUTTON}"
+FLAGS="${RAVEN_AVISION_FLAGS:-AV_INT_BUTTON | AV_CANCEL_BUTTON | AV_USE_GRAY_FILTER}"
 WORK="${RAVEN_BUILD_DIR:-$HOME/.cache/raven-driver}"
 OUT="${RAVEN_LIB_DIR:-$HOME/.local/lib/raven-sane}"
 INSTALL=0

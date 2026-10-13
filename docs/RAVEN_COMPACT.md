@@ -137,8 +137,17 @@ The build script therefore patches three things for USB ID `0638:3200` only:
 Each run of the script patches a fresh copy of `avision.c` from git, so
 re-running after an update never stacks patches.
 
-The model entry uses the settings most similar Avision duplex sheet-fed
-scanners use (`AV_INT_BUTTON | AV_CANCEL_BUTTON`). Others can be tried with,
+### First real scan
+
+With the sheet-fed patch the page feeds and the scan shows the document, but
+in gray mode every stroke is dotted and the image repeats in groups of three
+rows: rows three apart correlate strongly, neighbouring rows not at all. That
+is colour data arriving for a gray request. Without `AV_USE_GRAY_FILTER` the
+backend sets "no filter" in SET WINDOW for gray scans, and the Compact then
+sends RGB, which the backend splits into three gray rows per scan line.
+
+The model entry now uses `AV_INT_BUTTON | AV_CANCEL_BUTTON | AV_USE_GRAY_FILTER`,
+the same as the AV186+, AV188, AV220D2+ and AD345F. Others can be tried with,
 for example, `RAVEN_AVISION_FLAGS="AV_INT_BUTTON" contrib/build-sane-avision.sh`.
 This is untested on the Compact. If scanning fails, capture:
 
