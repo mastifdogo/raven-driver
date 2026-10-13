@@ -82,6 +82,30 @@ scanner's INQUIRY identifies it as `Raven` / `Compact_WiFi`. Do not also list
 `usb 0x0638 0x3200` in `/etc/sane.d/avision.conf`: that makes the backend probe
 the scanner a second way and log "not yet in whitelist" warnings.
 
+### The firmware reboots on TEST UNIT READY
+
+Listing works, but opening the scanner fails with "Invalid argument". The
+debug log shows why. INQUIRY succeeds, with its status byte on the bulk
+endpoint. SANE then sends TEST UNIT READY (opcode `00`). The scanner accepts
+the 10-byte command but never sends a status byte. About 20 seconds later it
+reboots: it drops off USB and re-enumerates as a new device. Paper in the
+feeder makes no difference. Every later command fails with "No such device".
+
+To get past this, the rebuilt backend has a command filter for bring-up:
+
+* `RAVEN_SKIP_OPS=00` skips the listed commands instead of sending them, and
+  reports success. Tokens are opcodes (`00`) or opcode:datatype for READ and
+  SEND (`28:64`), separated by commas.
+* `RAVEN_TRACE_OPS=1` logs one line per command. `RAVEN_SKIP_OPS` does too.
+  Both need `SANE_DEBUG_AVISION=1` or higher to show.
+
+```sh
+RAVEN_SKIP_OPS=00 SANE_DEBUG_AVISION=1 raven-scanimage -A 2>&1 | grep -E "raven:|scanimage:|^ +-"
+```
+
+If the scanner reboots again, the last `raven: send` line names the next
+command it cannot take; add it to `RAVEN_SKIP_OPS` and repeat.
+
 The model entry uses the settings most similar Avision duplex sheet-fed
 scanners use (`AV_INT_BUTTON | AV_CANCEL_BUTTON`). Others can be tried with,
 for example, `RAVEN_AVISION_FLAGS="AV_INT_BUTTON" contrib/build-sane-avision.sh`.

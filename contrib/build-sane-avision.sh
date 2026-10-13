@@ -97,6 +97,40 @@ if marker not in src:
 src = re.sub(r"    /\* Raven Compact \(Avision OEM\), added by raven-driver \*/\n.*?/\* status=\"untested\" \*/\n\n",
              "", src, flags=re.S)
 src = src.replace(marker, marker + entry, 1)
+
+# Command filter for bringing up the Compact, whose firmware reboots on some
+# commands (TEST UNIT READY among them). Tokens in RAVEN_SKIP_OPS are opcodes
+# ("00") or opcode:datatype for READ/SEND ("28:64"), comma separated. Skipped
+# commands are not sent and report success with zeroed data. RAVEN_TRACE_OPS
+# (or RAVEN_SKIP_OPS) logs one short line per command.
+hook_marker = "/* raven-driver: RAVEN_SKIP_OPS */"
+hook = """  """ + hook_marker + """
+  {
+    const char* skip = getenv ("RAVEN_SKIP_OPS");
+    const uint8_t* c = (const uint8_t*) cmd;
+    char tok[8], tok2[8], list[512];
+    snprintf (tok, sizeof (tok), ",%02x,", c[0]);
+    snprintf (tok2, sizeof (tok2), ",%02x:%02x,", c[0], cmd_size > 2 ? c[2] : 0);
+    if (skip || getenv ("RAVEN_TRACE_OPS"))
+      DBG (1, "raven: %s %02x:%02x %s\\n",
+           (skip && (snprintf (list, sizeof (list), ",%s,", skip),
+                     strstr (list, tok) || strstr (list, tok2))) ? "SKIP" : "send",
+           c[0], cmd_size > 2 ? c[2] : 0, strcmd);
+    if (skip) {
+      snprintf (list, sizeof (list), ",%s,", skip);
+      if (strstr (list, tok) || strstr (list, tok2)) {
+        if (dst && dst_size && *dst_size)
+          memset (dst, 0, *dst_size);
+        return SANE_STATUS_GOOD;
+      }
+    }
+  }
+"""
+anchor = '  DBG (7, "avision_cmd: %s\\n", strcmd);\n'
+if hook_marker not in src:
+    if anchor not in src:
+        sys.exit("avision.c layout not recognised; cannot add the command filter")
+    src = src.replace(anchor, anchor + hook, 1)
 open(path, "w", encoding="latin-1").write(src)
 print("entry flags:", flags)
 PY
